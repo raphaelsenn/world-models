@@ -53,18 +53,14 @@ class BaseTrainer(ABC):
 
     def handle_periodic_tasks(
         self,
-        step: int,
-        trainval_loader: DataLoader | None,
+        epoch: int,
+        train_loss: float,
         val_loader: DataLoader | None,
     ) -> None:
         did_eval = False
 
-        if step % self.eval_every == 0:
-            self.stats.append_step(step)
-
-            if trainval_loader is not None:
-                train_eval_loss = self.evaluate(trainval_loader)
-                self.stats.append_train(train_eval_loss)
+        if epoch % self.eval_every == 0:
+            self.stats.append_step(epoch)
 
             if val_loader is not None:
                 val_eval_loss = self.evaluate(val_loader)
@@ -74,17 +70,14 @@ class BaseTrainer(ABC):
             did_eval = True
 
         if did_eval and self.verbose:
-            msg = f"Step: {step:10d}"
-
-            if trainval_loader is not None:
-                msg += f"\tTrain eval loss: {self.stats.last_train_loss:10.4f}"
+            msg = f"Epoch: {epoch:10d}\tTrain loss: {train_loss:10.4f}"
 
             if val_loader is not None:
                 msg += f"\tVal loss: {self.stats.last_val_loss:10.4f}"
 
             print(msg)
 
-        if step % self.save_every == 0:
+        if epoch % self.save_every == 0:
             name = self.model_name
             self.save_model(name)
             self.save_stats(name.replace(".pt", ".csv"))

@@ -14,8 +14,8 @@ class MemoryTrainer(BaseTrainer):
             optimizer: Optimizer,
             epochs: int,
             device: str="cpu",
-            eval_every: int=1,  # Epochs (not gradient steps)
-            save_every: int=1,  # Epochs (not gradient steps)
+            eval_every: int=1,
+            save_every: int=1,
             verbose: bool=True,
     ) -> None:
         super().__init__(

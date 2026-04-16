@@ -223,6 +223,7 @@ MDN-RNN-Dataset*/
 Memory-Dataset*/
 VAE-Dataset*/
 Vision-Dataset*/
+Vision-CarRacing*/
 
 # Random files
 test.ipynb
