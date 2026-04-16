@@ -18,12 +18,14 @@ class VisionDataset(Dataset):
         assert files, f"{root} is empty."
         self.files = files
 
-        indices = []
-        for chunk_id, chunk in enumerate(self.files):
-            chunk = np.load(os.path.join(self.root, chunk), "r")
+        self.indices = []
+        self.chunks = []
+
+        for chunk_id, chunk_file in enumerate(self.files):
+            chunk = np.load(os.path.join(self.root, chunk_file), mmap_mode="r")
+            self.chunks.append(chunk)
             n = chunk.shape[0]
-            indices.extend((chunk_id, id) for id in range(n))
-        self.indices = indices
+            self.indices.extend((chunk_id, i) for i in range(n))
 
     def __len__(self) -> int:
         return len(self.indices)
@@ -31,11 +33,7 @@ class VisionDataset(Dataset):
     def __getitem__(self, index: int) -> torch.Tensor:
         if isinstance(index, torch.Tensor):
             index = index.item()
-        chunk_id, index = self.indices[index]
 
-        file_path = os.path.join(self.root, self.files[chunk_id]) 
-        chunk = np.load(file_path)
-
-        obs = torch.as_tensor(np.array(chunk[index]), dtype=torch.float32).div_(255.0)
-
+        chunk_id, local_index = self.indices[index]
+        obs = torch.from_numpy(self.chunks[chunk_id][local_index].copy()).float().div_(255.0)
         return obs

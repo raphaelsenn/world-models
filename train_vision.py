@@ -2,7 +2,7 @@ from argparse import Namespace, ArgumentParser
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, ConcatDataset, random_split
 
 from src import ConvVAE, VisionTrainer, VisionDataset, VisionLoss
 
@@ -35,6 +35,19 @@ def set_seeds(seed: int) -> None:
     torch.manual_seed(seed)
 
 
+def load_datasets(args: Namespace) -> None:
+    vae_dataset = VisionDataset(args.vae_dataset)
+    vae_len = len(vae_dataset)
+    
+    train_len = int(0.98 * vae_len)
+    trainval_len = int(0.01 * vae_len)
+    val_len = vae_len - train_len - trainval_len
+
+    train_set, trainval_set, val_set = random_split(vae_dataset, [train_len, trainval_len, val_len])
+    train_set = ConcatDataset([train_set, trainval_set])
+    return train_set, trainval_set, val_set
+
+
 def main() -> None:
     args = parse_args()
     set_seeds(args.seed)
@@ -43,18 +56,12 @@ def main() -> None:
     criterion = VisionLoss(args.kl_weight)
     optimizer = torch.optim.Adam(vae.parameters(), args.learning_rate)
     
-    vae_dataset = VisionDataset(args.vae_dataset)
-    vae_len = len(vae_dataset)
-    
-    train_len = int(0.98 * vae_len)
-    trainval_len = int(0.01 * vae_len)
-    val_len = vae_len - train_len - trainval_len
-
-    trainset, trainval_set, val_set = random_split(vae_dataset, [train_len, trainval_len, val_len])
-    train_loader = DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=args.n_workers)
+    train_set, trainval_set, val_set = load_datasets(args)
+    train_len, trainval_len, val_len = len(train_set), len(trainval_set), len(val_set) 
+    train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.n_workers)
     trainval_loader = DataLoader(trainval_set, batch_size=args.batch_size, shuffle=False, num_workers=args.n_workers)
     val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=args.n_workers)
-
+    
     if args.verbose:
         print(f"|Train| = {train_len}, |Train-val| = {trainval_len}, |Val| = {val_len}")
 
