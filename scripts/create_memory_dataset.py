@@ -83,7 +83,7 @@ def create_dataset(
 def parse_args() -> Namespace:
     parser = ArgumentParser(description="MDN-RNN-Dataset creation")
 
-    parser.add_argument("--vae_weights", type=str, default="vae-img64-z32.pt")
+    parser.add_argument("--vae_weights", type=str, default="vae-cin3-z32.pt")
     parser.add_argument("--n_channels", type=int, default=3)
     parser.add_argument("--z_dim", type=int, default=32)
 

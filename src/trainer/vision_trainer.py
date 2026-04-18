@@ -1,10 +1,13 @@
-import torch
 import torch.nn as nn
 from torch.optim import Optimizer
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 
+import pandas as pd
+import gymnasium as gym
+
+from src.data.vision_buffer import VisionBuffer
 from src.trainer.base_trainer import BaseTrainer
-from src.utils.eval_stats import EvaluationStats
+from src.utils.prepro import preprocess_observation
 
 
 class VisionTrainer(BaseTrainer):
@@ -14,9 +17,14 @@ class VisionTrainer(BaseTrainer):
             criterion: nn.Module,
             optimizer: Optimizer,
             epochs: int,
+            in_channels: int=3,
+            n_timesteps: int=10_000_000,
+            horizon: int=100_000,
+            batch_size: int=64,
             device: str="cpu",
-            eval_every: int=10,
-            save_every: int=10,
+            n_workers: int=0,
+            pin_memory: bool=False, 
+            seed: int=0,
             verbose: bool=True
     ) -> None:
         super().__init__(
@@ -24,58 +32,97 @@ class VisionTrainer(BaseTrainer):
             criterion, 
             optimizer, 
             device, 
-            eval_every, 
-            save_every, 
-            verbose
         )
 
+        self.buffer = VisionBuffer(in_channels, horizon)
+
+        self.in_channels = in_channels
         self.epochs = epochs
-        self.model_name = "vae-img64-z32.pt"
+        self.n_timesteps = n_timesteps
+        self.horizon = horizon
+        self.batch_size = batch_size
+
+        self.n_workers = n_workers 
+        self.pin_memory = pin_memory 
+        self.seed = seed
+        self.verbose = verbose
+
+        self.obs_ = None
+
+    def collect_data(self, env: gym.Env) -> None:
+        for _ in range(0, self.horizon):
+            obs = preprocess_observation(self.obs_)
+            
+            action = env.action_space.sample()
+            obs_nxt, _, terminated, truncated, _ = env.step(action)
+            done = terminated or truncated
+            
+            self.buffer.push(obs)
+            self.obs_ = obs_nxt
+
+            if done:
+                self.obs_, _ = env.reset()
+
+    def train_one_epoch(self, dataloader: DataLoader) -> float:
+        self.model.train() 
+        
+        total_loss = 0.0 
+        for x_img in dataloader:
+            x_img = x_img[0].to(self.device)
+            batch_size = x_img.size(0) 
+            
+            x_recon, kl = self.model(x_img)
+
+            loss = self.criterion(x_img, x_recon, kl)
+            total_loss += float(batch_size * loss.item())
+
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+        mean_loss = total_loss / self.horizon
+        
+        return mean_loss
+
+    def train_n_epochs(self, dataloader: DataLoader, step: int) -> None:
+        total_loss = 0.0 
+        for epoch in range(self.epochs):
+            total_loss += self.train_one_epoch(dataloader)
+
+        mean_loss = total_loss / self.epochs
+        self.stats.append_step(step)
+        self.stats.append_train(mean_loss)
 
     def train(
-            self, 
-            train_loader: DataLoader, 
-            val_loader: DataLoader | None = None
+            self,
+            env: gym.Env,
     ) -> None:
-        for epoch in range(self.epochs):
-            self.model.train()
-            total_loss = 0.0
-            total_samples = 0
-            for x_img in train_loader:
-                batch_size = x_img.size(0) 
-                
-                x_img = x_img.to(self.device)
-                x_recon, kl = self.model(x_img)
-                
-                loss = self.criterion(x_img, x_recon, kl)
-                
-                total_loss += loss.item() * batch_size
-                total_samples += batch_size
-
-                self.optimizer.zero_grad()
-                loss.backward()
-                self.optimizer.step()
-
-            self.handle_periodic_tasks(epoch + 1, total_loss / total_samples, val_loader) 
+        env.action_space.seed(seed=self.seed)
+        self.obs_, _ = env.reset(seed=self.seed)
         
-    @torch.no_grad()
-    def evaluate(self, dataloader: DataLoader) -> float:
-        self.model.eval()
+        for step in range(1, self.n_timesteps + 1, self.horizon):
+            self.collect_data(env)
+            dataloader = self._make_dataloader()
+            self.train_n_epochs(dataloader, step)
 
-        total_loss = 0.0
-        total_samples = 0
+            self.save_model()
+            self.save_stats()
 
-        for x_img in dataloader:
-            x_img = x_img.to(self.device)
-            batch_size = x_img.size(0)
+            if self.verbose:
+                print(f"T: {step:9d}\tLoss: {self.stats.last_train_loss:10.8f}")
 
-            x_recon, kl = self.model(x_img)
-            loss = self.criterion(x_img, x_recon, kl)
-
-            total_loss += loss.item() * batch_size
-            total_samples += batch_size
-
-        if total_samples == 0:
-            raise ValueError("Dataloader is empty.")
-
-        return total_loss / total_samples
+    def save_stats(self) -> None:
+        save_name: str = self.model.save_name()
+        save_name = save_name.replace(".pt", "_report.csv")
+        data = {"step": self.stats.step, "train_loss": self.stats.train_loss}
+        pd.DataFrame.from_dict(data).to_csv(save_name, index=False)
+    
+    def _make_dataloader(self) -> DataLoader:
+        dataset = TensorDataset(self.buffer.dataset()) 
+        dataloader = DataLoader(
+            dataset=dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.n_workers,
+            pin_memory=self.pin_memory
+        ) 
+        return dataloader

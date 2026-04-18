@@ -122,3 +122,8 @@ class ConvVAE(nn.Module):
     
     def decode(self, z: torch.Tensor) -> torch.Tensor:
         return self.decoder(z)                                                  # [B, n_channels, 64, 64]
+
+    def save_name(self) -> str:
+        save_name = f"vae-cin{self.n_channels}"
+        save_name += f"-z{self.z_dim}.pt"
+        return save_name

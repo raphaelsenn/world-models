@@ -152,3 +152,8 @@ class Memory(nn.Module):
 
         latent_next = Normal(mu_sel, std_sel).sample()               # [B, z_dim]
         return latent_next, hidden
+    
+    def save_name(self) -> str:
+        save_name = f"mdn-rnn-z{self.z_dim}"
+        save_name += f"-h{self.hidden_dim}.pt"
+        return save_name
