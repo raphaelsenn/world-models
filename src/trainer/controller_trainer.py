@@ -36,6 +36,7 @@ class ControllerTrainer(BaseTrainer):
         lr_critic: float = 3e-4,
         gamma: float=0.99,
         reward_scale: float=5.0,
+        tau: float=0.995,
         batch_size: int = 64,
         device: str = "cpu",
         eval_every: int=5_000,
@@ -62,6 +63,7 @@ class ControllerTrainer(BaseTrainer):
 
         self.gamma = gamma
         self.reward_scale = reward_scale
+        self.tau = tau
         self.entropy_coef = 1.0 / reward_scale
 
         self.optimizer_actor = torch.optim.Adam(
@@ -78,7 +80,12 @@ class ControllerTrainer(BaseTrainer):
             action_dim=action_dim,
             device=self.device,
         )
-
+    @torch.no_grad()
+    def update_target_networks(self) -> None:
+        params = zip(self.model.critic.parameters(), self.model.critic_target.parameters())
+        for theta, theta_old in params:
+            theta_old.data.copy_(self.tau * theta_old.data + (1.0 - self.tau) * theta.data) 
+    
     @torch.no_grad()
     def act(self, state: np.ndarray, deterministic: bool=False) -> np.ndarray:
         state_t = torch.as_tensor(state, dtype=torch.float32, device=self.device)
@@ -129,7 +136,7 @@ class ControllerTrainer(BaseTrainer):
             # Compute targets for Q functions
             with torch.no_grad():
                 a_tilde, logp_a_tilde = self.model.sample(s_nxt)                        # [B, action_dim], [B]
-                q1_nxt, q2_nxt = self.model.critic(s_nxt, a_tilde)                      # [B], [B]
+                q1_nxt, q2_nxt = self.model.critic_target(s_nxt, a_tilde)               # [B], [B]
                 q_target = torch.min(q1_nxt, q2_nxt) - self.entropy_coef * logp_a_tilde # [B]
                 td_target = r + self.gamma * (1.0 - d) * q_target                       # [B]
 

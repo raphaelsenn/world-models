@@ -28,7 +28,8 @@ def parse_args() -> Namespace:
     parser.add_argument("--n_timesteps", type=int, default=1_000_000)
     parser.add_argument("--n_gradient_steps", type=int, default=1)
     parser.add_argument("--gamma", type=float, default=0.99)
-    parser.add_argument("--action_scale", type=float, default=5.0)
+    parser.add_argument("--reward_scale", type=float, default=5.0)
+    parser.add_argument("--tau", type=float, default=0.995)
     parser.add_argument("--buffer_capacity", type=int, default=1_000_000)
     parser.add_argument("--buffer_start_size", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=64)
@@ -85,7 +86,8 @@ def main() -> None:
         n_timesteps=args.n_timesteps,
         n_gradient_steps=args.n_gradient_steps,
         gamma=args.gamma,
-        action_scale=args.action_scale,
+        reward_scale=args.reward_scale,
+        tau=args.tau,
         buffer_capacity=args.buffer_capacity,
         buffer_start_size=args.buffer_start_size,
         lr_actor=args.lr_actor,

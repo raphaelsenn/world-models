@@ -1,3 +1,4 @@
+import copy
 from typing import Tuple
 
 import torch
@@ -144,7 +145,7 @@ class Controller(nn.Module):
 
         self.actor = Actor(self.state_dim, action_dim, fc_dim)
         self.critic = Critic(self.state_dim, action_dim, fc_dim)
-
+        self.critic_target = copy.deepcopy(self.critic)
 
     def forward(self, state: torch.Tensor) -> torch.Tensor:
         h = self.actor.mlp(state)           # [B, fc_dim]
