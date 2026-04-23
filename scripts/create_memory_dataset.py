@@ -8,6 +8,7 @@ import gymnasium as gym
 import torch
 
 from src.world_model import ConvVAE
+from src.utils.wrappers import ActionWrapper
 
 
 def preprocess_observation(obs: np.ndarray, obs_tgt_size: int=64) -> np.ndarray:
@@ -108,6 +109,8 @@ def main() -> None:
     vae.load_state_dict(torch.load(args.vae_weights, map_location="cpu", weights_only=True))
 
     env = gym.make(args.env_id, render_mode="rgb_array")
+    env = ActionWrapper(env)
+
     create_dataset(vae, env, args.n_episodes, args.seed, args.verbose, args.device)
 
 

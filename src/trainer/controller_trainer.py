@@ -10,6 +10,7 @@ from src.data.controller_buffer import ControllerBuffer
 from src.world_model.controller import Controller
 from src.world_model.world_model import WorldModel
 from src.utils.eval_stats import EnvEvaluationStats
+from src.utils.wrappers import ActionWrapper
 
 
 class ControllerTrainer(BaseTrainer):
@@ -112,6 +113,7 @@ class ControllerTrainer(BaseTrainer):
 
     def evaluate(self, step: int) -> None:
         env = gym.make(self.env_id_, render_mode="rgb_array")        
+        env = ActionWrapper(env) 
         returns = np.zeros(self.n_eval_episodes, dtype=np.float32)    
         for ep in range(self.n_eval_episodes): 
             obs, _ = env.reset(seed=self.seed + 100 + ep)

@@ -5,6 +5,7 @@ import gymnasium as gym
 import torch
 
 from src import WorldModel, Controller, ControllerTrainer
+from src.utils.wrappers import ActionWrapper
 
 
 def parse_args() -> Namespace:
@@ -14,7 +15,7 @@ def parse_args() -> Namespace:
 
     # World model / controller dims
     parser.add_argument("--in_channels", type=int, default=3)
-    parser.add_argument("--action_dim", type=int, default=3)
+    parser.add_argument("--action_dim", type=int, default=2)    # [-1, 1] x [-1, 1]
     parser.add_argument("--latent_dim", type=int, default=32)
     parser.add_argument("--hidden_dim", type=int, default=256)
     parser.add_argument("--controller_fc_dim", type=int, default=64)
@@ -59,6 +60,7 @@ def main() -> None:
     set_seeds(args.seed)
 
     env = gym.make(args.env_id)
+    env = ActionWrapper(env)
 
     controller = Controller(
         action_dim=args.action_dim,

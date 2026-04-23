@@ -13,7 +13,7 @@ def parse_args() -> Namespace:
     parser.add_argument("--memory_dataset", type=str, default="MDN-RNN-Dataset-CarRacing-v3")
 
     parser.add_argument("--z_dim", type=int, default=32)
-    parser.add_argument("--action_dim", type=int, default=3)
+    parser.add_argument("--action_dim", type=int, default=2)
     parser.add_argument("--hidden_dim", type=int, default=256)
     parser.add_argument("--n_mixtures", type=int, default=5)
 
