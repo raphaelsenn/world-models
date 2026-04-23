@@ -42,6 +42,7 @@ class WorldModel:
     
     @torch.no_grad()
     def reset(self, obs: np.ndarray) -> np.ndarray:
+        self.vision.eval(); self.memory.eval()
         hidden = self._init_hidden()                                    # [1, hidden_dim]
         latent = self._encode_obs(obs)                                  # [1, latent_dim]
 

@@ -130,6 +130,7 @@ class ControllerTrainer(BaseTrainer):
         self.env_eval_stats.append_return(average_return)
 
     def train_n_steps(self) -> None:
+        self.model.train()
         for _ in range(self.n_gradient_steps):
             s, a, r, s_nxt, d = self.buffer.sample()
 
@@ -161,6 +162,7 @@ class ControllerTrainer(BaseTrainer):
             self.optimizer_actor.step()
 
     def collect_transition(self, env: gym.Env, state: np.ndarray) -> tuple[np.ndarray, bool]:
+        self.model.eval()
         action = self.act(state, deterministic=False)
 
         obs_next, reward, terminated, truncated, _ = env.step(action)

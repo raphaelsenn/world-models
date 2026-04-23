@@ -44,7 +44,7 @@ def parse_args() -> Namespace:
     parser.add_argument("--n_eval_episodes", type=int, default=1)
     parser.add_argument("--eval_every", type=int, default=1)
     parser.add_argument("--save_every", type=int, default=1)
-    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--verbose", type=bool, default=True)
 
     return parser.parse_args()
 
