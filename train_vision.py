@@ -4,7 +4,7 @@ import numpy as np
 import gymnasium as gym
 import torch
 
-from src import ConvVAE, VisionTrainer, VisionLoss
+from src import ConvVAE, VisionTrainer
 
 
 def parse_args() -> Namespace:
@@ -17,16 +17,16 @@ def parse_args() -> Namespace:
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--n_timesteps", type=int, default=10_000_000)
     parser.add_argument("--horizon", type=int, default=100_000)
-    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--batch_size", type=int, default=32)
 
     parser.add_argument("--learning_rate", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=0.0)
-    parser.add_argument("--kl_weight", type=float, default=1e-3)
+    parser.add_argument("--kl_weight", type=float, default=1e-4)
 
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--n_workers", type=int, default=0)
-    parser.add_argument("--pin_memory", type=bool, default=False )
+    parser.add_argument("--pin_memory", type=bool, default=False)
 
     parser.add_argument("--verbose", type=bool, default=True)
 
@@ -43,23 +43,16 @@ def main() -> None:
     set_seeds(args.seed)
     
     vae = ConvVAE(args.n_channels, args.z_dim)
-    criterion = VisionLoss(args.kl_weight)
-    optimizer = torch.optim.Adam(
-        vae.parameters(),
-        lr=args.learning_rate,
-        weight_decay=args.weight_decay,
-    )
-
     env = gym.make(args.env_id, render_mode="rgb_array")
 
     vae_trainer = VisionTrainer(
         model=vae,
-        criterion=criterion,
-        optimizer=optimizer,
         epochs=args.epochs,
         in_channels=args.n_channels,
         n_timesteps=args.n_timesteps,
         horizon=args.horizon,
+        learning_rate=args.learning_rate,
+        kl_weight=args.kl_weight, 
         batch_size=args.batch_size,
         device=args.device,
         n_workers=args.n_workers,

@@ -8,15 +8,16 @@ from torch.utils.data import DataLoader
 import pandas as pd
 
 from src.trainer.base_trainer import BaseTrainer
+from src.world_model.memory import Memory
+from src.loss.memory_loss import MemoryLoss
 
 
 class MemoryTrainer(BaseTrainer):
     def __init__(
             self,
-            model: nn.Module,
-            criterion: nn.Module,
-            optimizer: Optimizer,
+            model: Memory,
             epochs: int,
+            learning_rate: float=0.001,
             device: str="cpu",
             eval_every: int=1,
             save_every: int=1,
@@ -24,12 +25,14 @@ class MemoryTrainer(BaseTrainer):
     ) -> None:
         super().__init__(
             model, 
-            criterion, 
-            optimizer, 
             device, 
         )
 
+        self.criterion = MemoryLoss()
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
+
         self.epochs = epochs
+        self.learning_rate = learning_rate
         self.eval_every = eval_every
         self.save_every = save_every
         self.verbose = verbose
@@ -55,18 +58,17 @@ class MemoryTrainer(BaseTrainer):
     def train(
             self, 
             train_loader: DataLoader, 
-            trainval_loader: DataLoader | None = None,
             val_loader: DataLoader | None = None
     ) -> None:
         """
         Args:
+        ----- 
         train_loader    : Full training data
-        trainval_loader : Subset of training data for evaluation - since train_loader might be large
-        val_loader      : Validation data (data the model never has seen before)
+        val_loader      : Validation data
         """ 
         for epoch in range(self.epochs):
             self.train_one_epoch(train_loader)
-            self.handle_periodic_tasks(epoch + 1, trainval_loader, val_loader)
+            self.handle_periodic_tasks(epoch + 1, train_loader, val_loader)
 
     @torch.no_grad()
     def evaluate(self, dataloader: DataLoader) -> float:
@@ -110,19 +112,16 @@ class MemoryTrainer(BaseTrainer):
     def handle_periodic_tasks(
         self,
         epoch: int,
-        trainval_loader: DataLoader | None,
+        train_loader: DataLoader | None,
         val_loader: DataLoader | None,
     ) -> None:
         did_eval = False
         msg = f"Epoch: {epoch:10d}\t"
 
         if epoch % self.eval_every == 0:
-            if trainval_loader is not None:
-                train_loss = self.evaluate(trainval_loader)
-                msg += f"Train loss: {train_loss:10.6f}\t" 
-                did_eval = True
-            else:
-                train_loss = train_loss if trainval_loader is not None else math.nan
+            train_loss = self.evaluate(train_loader)
+            msg += f"Train loss: {train_loss:10.6f}\t" 
+            did_eval = True
 
             if val_loader is not None:
                 val_loss = self.evaluate(val_loader)

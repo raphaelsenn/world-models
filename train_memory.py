@@ -4,11 +4,12 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, random_split
 
-from src import Memory, MemoryLoss, MemoryDataset, MemoryTrainer
+from src import Memory, MemoryDataset, MemoryTrainer
 
 
 def parse_args() -> Namespace:
     parser = ArgumentParser(description="Training configuration for the memory component")
+
     parser.add_argument("--memory_dataset", type=str, default="MDN-RNN-Dataset-CarRacing-v3")
 
     parser.add_argument("--z_dim", type=int, default=32)
@@ -17,8 +18,8 @@ def parse_args() -> Namespace:
     parser.add_argument("--n_mixtures", type=int, default=5)
 
     parser.add_argument("--epochs", type=int, default=25)
-    parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--learning_rate", type=float, default=0.0003)
+    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--learning_rate", type=float, default=0.001)
     parser.add_argument("--weight_decay", type=float, default=0.0)
 
     parser.add_argument("--device", type=str, default="cpu")
@@ -44,17 +45,16 @@ def create_dataloaders(args: Namespace) -> tuple[DataLoader, ...]:
     mem_dataset = MemoryDataset(args.memory_dataset)
     mem_len = len(mem_dataset)
 
-    train_len = int(0.90 * mem_len)
-    trainval_len = int(0.05 * mem_len)
-    val_len = mem_len - train_len - trainval_len
+    train_len = int(0.95 * mem_len)
+    val_len = mem_len - train_len
 
     if args.verbose:
-        print(f"|Train| = {train_len}, |Train-val| = {trainval_len}, |Val| = {val_len}")
+        print(f"|Train| = {train_len}, |Val| = {val_len}")
 
     generator = torch.Generator().manual_seed(args.seed)
-    trainset, trainval_set, val_set = random_split(
+    trainset, val_set = random_split(
         mem_dataset,
-        [train_len, trainval_len, val_len],
+        [train_len, val_len],
         generator=generator,
     )
 
@@ -65,13 +65,7 @@ def create_dataloaders(args: Namespace) -> tuple[DataLoader, ...]:
         num_workers=args.n_workers,
         pin_memory=args.pin_memory,
     )
-    trainval_loader = DataLoader(
-        dataset=trainval_set,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.n_workers,
-        pin_memory=args.pin_memory,
-    )
+    
     val_loader = DataLoader(
         dataset=val_set,
         batch_size=args.batch_size,
@@ -79,7 +73,7 @@ def create_dataloaders(args: Namespace) -> tuple[DataLoader, ...]:
         num_workers=args.n_workers,
         pin_memory=args.pin_memory,
     )
-    return train_loader, trainval_loader, val_loader
+    return train_loader, val_loader
 
 
 def main() -> None:
@@ -87,26 +81,19 @@ def main() -> None:
     set_seeds(args.seed)
 
     memory = Memory(args.z_dim, args.action_dim, args.hidden_dim, args.n_mixtures)
-    criterion = MemoryLoss()
-    optimizer = torch.optim.Adam(
-        memory.parameters(),
-        lr=args.learning_rate,
-        weight_decay=args.weight_decay,
-    )
 
-    train_loader, trainval_loader, val_loader = create_dataloaders(args)
+    train_loader, val_loader = create_dataloaders(args)
 
     mem_trainer = MemoryTrainer(
         model=memory,
-        criterion=criterion,
-        optimizer=optimizer,
+        learning_rate=args.learning_rate, 
         epochs=args.epochs,
         device=args.device,
         eval_every=args.eval_every,
         save_every=args.save_every,
         verbose=args.verbose,
     )
-    mem_trainer.train(train_loader, trainval_loader, val_loader)
+    mem_trainer.train(train_loader, val_loader)
 
 
 if __name__ == "__main__":

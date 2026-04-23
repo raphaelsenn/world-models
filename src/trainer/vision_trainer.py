@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader, TensorDataset
@@ -5,6 +6,8 @@ from torch.utils.data import DataLoader, TensorDataset
 import pandas as pd
 import gymnasium as gym
 
+from src.world_model.vision import ConvVAE
+from src.loss import VisionLoss
 from src.data.vision_buffer import VisionBuffer
 from src.trainer.base_trainer import BaseTrainer
 from src.utils.prepro import preprocess_observation
@@ -13,13 +16,13 @@ from src.utils.prepro import preprocess_observation
 class VisionTrainer(BaseTrainer):
     def __init__(
             self,
-            model: nn.Module,
-            criterion: nn.Module,
-            optimizer: Optimizer,
+            model: ConvVAE,
             epochs: int,
             in_channels: int=3,
             n_timesteps: int=10_000_000,
             horizon: int=100_000,
+            learning_rate: float=0.001,
+            kl_weight: float=0.0001,
             batch_size: int=64,
             device: str="cpu",
             n_workers: int=0,
@@ -29,16 +32,18 @@ class VisionTrainer(BaseTrainer):
     ) -> None:
         super().__init__(
             model, 
-            criterion, 
-            optimizer, 
             device, 
         )
 
+        self.criterion = VisionLoss(kl_weight)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
         self.buffer = VisionBuffer(in_channels, horizon)
 
         self.in_channels = in_channels
         self.epochs = epochs
         self.n_timesteps = n_timesteps
+        self.learning_rate = learning_rate
+        self.kl_weight = kl_weight 
         self.horizon = horizon
         self.batch_size = batch_size
 

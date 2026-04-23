@@ -2,7 +2,6 @@ from abc import ABC, abstractmethod
 
 import torch
 import torch.nn as nn
-from torch.optim import Optimizer
 
 from src.utils.eval_stats import EvaluationStats
 
@@ -11,20 +10,12 @@ class BaseTrainer(ABC):
     def __init__(
             self,
             model: nn.Module,
-            criterion: nn.Module,
-            optimizer: Optimizer,
             device: str="cpu",
     ) -> None:
         super().__init__()
         self.device = torch.device(device)
-        
         self.model = model.to(self.device)
-        self.criterion = criterion
-        self.optimizer = optimizer
 
-        if isinstance(criterion, nn.Module):
-            self.criterion.to(self.device)
-        
         self.stats = EvaluationStats()
 
         self.n_params = sum(

@@ -3,6 +3,7 @@ import torch
 
 
 class VisionBuffer:
+    """Rollout buffer for vision component (V) training.""" 
     def __init__(self, n_channels: int, horizon: int) -> None:
         self.n_channels = n_channels 
         self.horizon = horizon

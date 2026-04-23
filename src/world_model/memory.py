@@ -37,7 +37,8 @@ class MDN(nn.Module):
         pi_logits = self.pi(hidden)
         mu = self.mu(hidden)
         log_std = self.logstd(hidden)
-        std = F.softplus(log_std) + 1e-3
+        log_std = log_std.clamp(-20, 2)
+        std = torch.exp(log_std)
 
         new_shape = hidden.shape[:-1] + (self.n_mixtures, self.z_dim)
         mu = mu.view(*new_shape)
@@ -97,8 +98,8 @@ class Memory(nn.Module):
     @torch.no_grad() 
     def step(
             self, 
-            latent: torch.Tensor, 
-            action: torch.Tensor,
+            latent_prev: torch.Tensor, 
+            action_prev: torch.Tensor,
             hidden_prev: torch.Tensor,
     ) -> torch.Tensor:
         """
@@ -110,7 +111,7 @@ class Memory(nn.Module):
         action      : [B, action_dim]
         hidden_prev : [B, hidden_dim]
         """ 
-        cat = torch.cat([latent, action], dim=-1)       # [B, z_dim + action_dim]
+        cat = torch.cat([latent_prev, action_prev], dim=-1)       # [B, z_dim + action_dim]
         
         cat = cat.unsqueeze(1)                          # [B, 1, z_dim + action_dim]
         hidden_prev = hidden_prev.unsqueeze(1)          # [B, 1, hidden_dim]
@@ -126,10 +127,10 @@ class Memory(nn.Module):
         return pi_logits, mu, std, hidden
 
     @torch.no_grad()
-    def sample(
+    def encode(
             self, 
-            latent: torch.Tensor, 
-            action: torch.Tensor, 
+            latent_prev: torch.Tensor, 
+            action_prev: torch.Tensor, 
             hidden_prev: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -141,12 +142,31 @@ class Memory(nn.Module):
         action      : [B, action_dim]
         hidden_prev : [B, hidden_dim]
         """  
-        pi_logits, mu, std, hidden = self.step(latent, action, hidden_prev) 
+        _, _, _, hidden = self.step(latent_prev, action_prev, hidden_prev) 
+        return hidden
+    
+    @torch.no_grad()
+    def sample(
+            self, 
+            latent_prev: torch.Tensor, 
+            action_prev: torch.Tensor, 
+            hidden_prev: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        INFERENCE - Expects non-sequential input
+        
+        Input:
+        ------ 
+        latent      : [B, z_dim]
+        action      : [B, action_dim]
+        hidden_prev : [B, hidden_dim]
+        """  
+        pi_logits, mu, std, hidden = self.step(latent_prev, action_prev, hidden_prev) 
         
         mix = Categorical(logits=pi_logits)                          # [B]
         comp_idx = mix.sample()                                      # [B]
 
-        batch_idx = torch.arange(latent.size(0), device=latent.device)
+        batch_idx = torch.arange(latent_prev.size(0), device=latent_prev.device)
         mu_sel = mu[batch_idx, comp_idx, :]                          # [B, z_dim]
         std_sel = std[batch_idx, comp_idx, :]                        # [B, z_dim]
 
