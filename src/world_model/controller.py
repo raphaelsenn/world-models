@@ -33,18 +33,46 @@ class Actor(nn.Module):
             self, 
             state: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        hidden = self.mlp(state)
+        h = self.mlp(state)
 
-        mu = self.mu(hidden)
-        log_std = self.log_std(hidden)
-        std = nn.functional.softplus(log_std) + 1e-3
+        mu = self.mu(h)                     # [B, action_dim]
+        log_std = self.log_std(h)           # [B, action_dim]
+        log_std = log_std.clamp(-20, 2)     # [B, action_dim]
+        std = torch.exp(log_std)            # [B, action_dim]
 
         return mu, std
     
-    def act(self, state: torch.Tensor) -> torch.Tensor:
-        hidden = self.mlp(state)
-        mu = self.mu(hidden)
-        return torch.tanh(mu)
+    def act(self, state: torch.Tensor, deterministic: bool=False) -> torch.Tensor:
+        mu, std = self(state)
+
+        if deterministic:
+            return torch.tanh(mu)
+
+        dist = Normal(mu, std)
+        a_pre_tanh = dist.sample()          # [B, action_dim]
+        return torch.tanh(a_pre_tanh)       # [B, action_dim]
+
+    def sample(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Differentiable w.r.t. action.""" 
+        h = self.mlp(state)                 # [B, fc_dim]
+
+        mu = self.mu(h)                     # [B, action_dim]
+        log_std = self.log_std(h)           # [B, action_dim]
+        log_std = log_std.clamp(-20, 2)     # [B, action_dim]
+        std = torch.exp(log_std)            # [B, action_dim]
+
+        dist = Normal(mu, std)
+        a_pre_tanh = dist.rsample()         # [B, action_dim]
+        a_tanh = torch.tanh(a_pre_tanh)     # [B, action_dim]
+
+        # Log-prob correction
+        log_prob = dist.log_prob(a_pre_tanh)# [B, action_dim]
+        log_prob = log_prob.sum(dim=-1)     # [B]
+        log_prob -= (
+            2*(np.log(2) - a_pre_tanh - F.softplus(-2*a_pre_tanh))
+        ).sum(dim=-1)                      # [B]
+
+        return a_tanh, log_prob
 
 
 class Critic(nn.Module):
@@ -147,49 +175,17 @@ class Controller(nn.Module):
         self.critic = Critic(self.state_dim, action_dim, fc_dim)
         self.critic_target = copy.deepcopy(self.critic)
 
-    def forward(self, state: torch.Tensor) -> torch.Tensor:
-        h = self.actor.mlp(state)           # [B, fc_dim]
-        mu = self.actor.mu(h)               # [B, action_dim]
-        log_std = self.actor.log_std(h)     # [B, action_dim]
-        std = F.softplus(log_std) + 1e-4    # [B, action_dim]
-        return mu, std
+    def forward(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        return self.actor(state) 
 
     @torch.no_grad()
     def act(self, state: torch.Tensor, deterministic: bool=True) -> torch.Tensor:
-        """Not-differentiable w.r.t. action"""
-        h = self.actor.mlp(state)
+        """Returns a non-differentiable action w.r.t. actor parameters."""
+        return self.actor.act(state, deterministic)
 
-        mu = self.actor.mu(h)
-
-        if deterministic:
-            return torch.tanh(mu)
-
-        log_std = self.actor.log_std(h)
-        std = F.softplus(log_std) + 1e-4
-
-        return torch.tanh(mu + std * torch.randn_like(std))
-    
     def sample(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Differentiable w.r.t. action.""" 
-        h = self.actor.mlp(state)           # [B, fc_dim]
-
-        mu = self.actor.mu(h)               # [B, action_dim]
-        log_std = self.actor.log_std(h)     # [B, action_dim]
-        log_std = log_std.clamp(-20, 2)     # [B, action_dim]
-        std = torch.exp(log_std)            # [B, action_dim]
-
-        dist = Normal(mu, std)
-        a_pre_tanh = dist.rsample()         # [B, action_dim]
-        a_tanh = torch.tanh(a_pre_tanh)     # [B, action_dim]
-
-        # Log-prob correction
-        log_prob = dist.log_prob(a_pre_tanh)# [B, action_dim]
-        log_prob = log_prob.sum(dim=-1)     # [B]
-        log_prob -= (
-            2*(np.log(2) - a_tanh - F.softplus(-2*a_tanh))
-        ).sum(axis=-1)                      # [B]
-
-        return a_pre_tanh, log_prob
+        """Returns a differentiable action w.r.t. actor parameters."""
+        return self.actor.sample(state)
 
     def q(
             self, 

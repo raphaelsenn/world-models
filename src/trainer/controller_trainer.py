@@ -39,6 +39,7 @@ class ControllerTrainer(BaseTrainer):
         tau: float=0.995,
         batch_size: int = 64,
         device: str = "cpu",
+        update_target_every: int=1_000,
         eval_every: int=5_000,
         save_every: int=5_000,
         n_eval_episodes: int = 10,
@@ -57,6 +58,7 @@ class ControllerTrainer(BaseTrainer):
         self.buffer_start_size = buffer_start_size
         self.n_eval_episodes = n_eval_episodes
         self.seed = seed
+        self.update_target_every = update_target_every
         self.eval_every = eval_every
         self.save_every = save_every
         self.verbose = verbose
@@ -151,6 +153,9 @@ class ControllerTrainer(BaseTrainer):
             loss_q.backward()
             self.optimizer_critic.step()
 
+            for p in self.model.critic.parameters():
+                p.requires_grad = False
+
             # Compute policy loss
             a_tilde, logp_a_tilde = self.model.sample(s)                                # [B_action_dim], [B]
             q1, q2 = self.model.critic(s, a_tilde)                                      # [B], [B]
@@ -160,6 +165,9 @@ class ControllerTrainer(BaseTrainer):
             self.optimizer_actor.zero_grad() 
             loss_actor.backward()
             self.optimizer_actor.step()
+            
+            for p in self.model.critic.parameters():
+                p.requires_grad = True
 
     def collect_transition(self, env: gym.Env, state: np.ndarray) -> tuple[np.ndarray, bool]:
         self.model.eval()
@@ -167,6 +175,7 @@ class ControllerTrainer(BaseTrainer):
 
         obs_next, reward, terminated, truncated, _ = env.step(action)
         state_next = self.world_model.step(action, obs_next)
+        reward *= self.reward_scale
 
         done = terminated or truncated
         done_td = terminated
@@ -209,6 +218,8 @@ class ControllerTrainer(BaseTrainer):
         if step % self.save_every == 0:
             self.save_stats()
 
+        if step % self.update_target_every == 0:
+            self.update_target_networks()
 
     def reset_env(self, env: gym.Env, seed: int | None = None) -> np.ndarray:
         obs, _ = env.reset(seed=seed)
