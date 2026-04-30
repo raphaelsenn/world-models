@@ -17,9 +17,9 @@ def parse_args() -> Namespace:
     parser.add_argument("--hidden_dim", type=int, default=256)
     parser.add_argument("--n_mixtures", type=int, default=5)
 
-    parser.add_argument("--epochs", type=int, default=25)
-    parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--learning_rate", type=float, default=0.001)
+    parser.add_argument("--epochs", type=int, default=1000)
+    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--learning_rate", type=float, default=0.0001)
     parser.add_argument("--weight_decay", type=float, default=0.0)
 
     parser.add_argument("--device", type=str, default="cpu")

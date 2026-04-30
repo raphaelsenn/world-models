@@ -18,23 +18,26 @@ class WorldModel:
         self,
         in_channels: int = 3,
         latent_dim: int = 32,
-        action_dim: int = 3,
+        action_dim: int = 2,
         hidden_dim: int = 256,
         n_mixtures: int = 5,
         device: str = "cpu",
         weight_vision: str | None = None,
         weight_memory: str | None = None,
     ) -> None:
-        self.device = torch.device(device)
+        self.in_channels = in_channels
+        self.latent_dim = latent_dim
+        self.action_dim = action_dim 
         self.hidden_dim = hidden_dim
-
+        self.n_mixtures = n_mixtures
+        self.device = torch.device(device)
+        
         self.vision = ConvVAE(
             in_channels, latent_dim
         ).to(self.device)
         self.memory = Memory(
             latent_dim, action_dim, hidden_dim, n_mixtures
         ).to(self.device)
-
         self._load_weights(weight_vision, weight_memory)
 
         self.hidden: torch.Tensor | None = None
@@ -42,6 +45,11 @@ class WorldModel:
     
     @torch.no_grad()
     def reset(self, obs: np.ndarray) -> np.ndarray:
+        """
+        Input:
+        ------ 
+        obs    : [3, 64, 64]  (np.uint8)
+        """  
         self.vision.eval(); self.memory.eval()
         hidden = self._init_hidden()                                    # [1, hidden_dim]
         latent = self._encode_obs(obs)                                  # [1, latent_dim]
@@ -51,27 +59,41 @@ class WorldModel:
 
         self.hidden = hidden
         self.latent = latent
-
+        
         return state
 
     @torch.no_grad()
     def step(self, action: np.ndarray, obs_next: np.ndarray) -> np.ndarray: 
-        action = torch.as_tensor(action, dtype=torch.float32, device=self.device)
-        action = action.unsqueeze(0)
+        """
+        Input:
+        ------ 
+        action      : [action_dim] (np.float32)
+        obs_next    : [3, 64, 64]  (np.uint8)
+        """ 
+        action = torch.as_tensor(
+            action, dtype=torch.float32, device=self.device
+        ).unsqueeze(0)                                                  # [1, action_dim]
 
-        hidden_next = self.memory.encode(self.latent, action, self.hidden)
-        latent_next = self._encode_obs(obs_next)
-
+        hidden_next = self.memory.predict_next_hidden(
+            self.latent, action, self.hidden
+        )
+        latent_next = self._encode_obs(obs_next)                        # [1, latent_dim]
         state_next = torch.cat([latent_next, hidden_next], dim=-1)      # [1, latent_dim + hidden_dim]
         state_next = state_next.squeeze(0).cpu().numpy()                # [latent_dim + hidden_dim]
 
         self.hidden = hidden_next
         self.latent = latent_next
+        # print(hidden_next.min(), hidden_next.max()) 
 
         return state_next
 
     @torch.no_grad()
     def _encode_obs(self, obs: np.ndarray) -> torch.Tensor: 
+        """
+        Input:
+        ------ 
+        obs    : [3, 64, 64]  (np.uint8)
+        """ 
         obs = preprocess_observation(obs)                               # [3, 64, 64]                   
         obs_t = torch.as_tensor(
             obs, dtype=torch.float32, device=self.device
@@ -95,7 +117,7 @@ class WorldModel:
     def _init_hidden(self) -> torch.Tensor:
         return torch.zeros((1, self.hidden_dim), dtype=torch.float32, device=self.device)
     
-    def _to(self, device: torch.device) -> None:
+    def set_device(self, device: torch.device) -> None:
         self.device = device
         self.vision.to(self.device)
         self.memory.to(device)

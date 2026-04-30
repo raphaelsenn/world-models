@@ -18,7 +18,7 @@ def parse_args() -> Namespace:
     parser.add_argument("--action_dim", type=int, default=2)    # [-1, 1] x [-1, 1]
     parser.add_argument("--latent_dim", type=int, default=32)
     parser.add_argument("--hidden_dim", type=int, default=256)
-    parser.add_argument("--controller_fc_dim", type=int, default=64)
+    parser.add_argument("--controller_fc_dim", type=int, default=256)
     parser.add_argument("--n_mixtures", type=int, default=5)
 
     # Pre-trained weights of the world model
@@ -29,22 +29,22 @@ def parse_args() -> Namespace:
     parser.add_argument("--n_timesteps", type=int, default=1_000_000)
     parser.add_argument("--n_gradient_steps", type=int, default=1)
     parser.add_argument("--gamma", type=float, default=0.99)
-    parser.add_argument("--reward_scale", type=float, default=20.0)
-    parser.add_argument("--tau", type=float, default=0.995)
+    parser.add_argument("--tau", type=float, default=0.005)
     parser.add_argument("--buffer_capacity", type=int, default=1_000_000)
-    parser.add_argument("--buffer_start_size", type=int, default=10_000)
-    parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--buffer_start_size", type=int, default=256)
+    parser.add_argument("--batch_size", type=int, default=256)
+    parser.add_argument("--device", type=str, default="mps")
     parser.add_argument("--seed", type=int, default=300_000)
 
     # Optimization
     parser.add_argument("--lr_actor", type=float, default=3e-4)
     parser.add_argument("--lr_critic", type=float, default=3e-4)
+    parser.add_argument("--lr_alpha", type=float, default=3e-4)
 
     # Eval
-    parser.add_argument("--n_eval_episodes", type=int, default=10)
-    parser.add_argument("--eval_every", type=int, default=1_000)
-    parser.add_argument("--save_every", type=int, default=1_000)
+    parser.add_argument("--n_eval_episodes", type=int, default=5)
+    parser.add_argument("--eval_every", type=int, default=5_000)
+    parser.add_argument("--save_every", type=int, default=5_000)
     parser.add_argument("--verbose", type=bool, default=True)
 
     return parser.parse_args()
@@ -88,12 +88,12 @@ def main() -> None:
         n_timesteps=args.n_timesteps,
         n_gradient_steps=args.n_gradient_steps,
         gamma=args.gamma,
-        reward_scale=args.reward_scale,
         tau=args.tau,
         buffer_capacity=args.buffer_capacity,
         buffer_start_size=args.buffer_start_size,
         lr_actor=args.lr_actor,
         lr_critic=args.lr_critic,
+        lr_alpha=args.lr_alpha,
         batch_size=args.batch_size,
         device=args.device,
         n_eval_episodes=args.n_eval_episodes,

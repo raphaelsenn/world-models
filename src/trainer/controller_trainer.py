@@ -28,21 +28,21 @@ class ControllerTrainer(BaseTrainer):
         model: Controller,
         world_model: WorldModel,
         state_dim: int = 32 + 256,
-        action_dim: int = 3,
+        action_dim: int = 2,
         n_timesteps: int = 1_000_000,
         n_gradient_steps: int = 1,
         buffer_capacity: int = 1_000_000,
         buffer_start_size: int = 10_000,
-        lr_actor: float = 1e-4,
+        lr_actor: float = 3e-4,
         lr_critic: float = 3e-4,
-        gamma: float=0.99,
-        reward_scale: float=5.0,
-        tau: float=0.995,
-        batch_size: int = 64,
+        lr_alpha: float = 3e-4,
+        initial_alpha: float = 0.1,
+        gamma: float = 0.99,
+        tau: float = 0.005,
+        batch_size: int = 256,
         device: str = "cpu",
-        update_target_every: int=1_000,
-        eval_every: int=5_000,
-        save_every: int=5_000,
+        eval_every: int = 5_000,
+        save_every: int = 5_000,
         n_eval_episodes: int = 10,
         seed: int = 0,
         verbose: bool = True,
@@ -50,32 +50,39 @@ class ControllerTrainer(BaseTrainer):
         super().__init__(model, device)
 
         self.world_model = world_model
-        self.world_model._to(self.device) 
+        self.world_model.set_device(self.device) 
         
-        self.env_eval_stats = EnvEvaluationStats()
-
         self.n_timesteps = n_timesteps
         self.n_gradient_steps = n_gradient_steps
         self.buffer_start_size = buffer_start_size
-        self.n_eval_episodes = n_eval_episodes
-        self.seed = seed
-        self.update_target_every = update_target_every
+        self.lr_actor = lr_actor
+        self.lr_critic = lr_critic
+        self.lr_alpha = lr_alpha 
+        self.initial_alpha = initial_alpha
+        self.gamma = gamma
+        self.tau = tau
+        
+        self.target_entropy = -float(action_dim)
+        self.log_alpha = torch.nn.Parameter(
+            torch.tensor([np.log(initial_alpha)], dtype=torch.float32, device=self.device)
+        )
+
         self.eval_every = eval_every
         self.save_every = save_every
+        self.n_eval_episodes = n_eval_episodes
         self.verbose = verbose
-
-        self.gamma = gamma
-        self.reward_scale = reward_scale
-        self.tau = tau
-        self.entropy_coef = 1.0 / reward_scale
-
+        self.seed = seed
+        
         self.optimizer_actor = torch.optim.Adam(
             self.model.actor.parameters(), lr=lr_actor
         )
         self.optimizer_critic = torch.optim.Adam(
             self.model.critic.parameters(), lr=lr_critic
         )
-
+        self.optimizer_alpha = torch.optim.Adam(
+            [self.log_alpha], lr=lr_alpha
+        )
+        
         self.buffer = ControllerBuffer(
             capacity=buffer_capacity,
             batch_size=batch_size,
@@ -83,17 +90,7 @@ class ControllerTrainer(BaseTrainer):
             action_dim=action_dim,
             device=self.device,
         )
-    @torch.no_grad()
-    def update_target_networks(self) -> None:
-        params = zip(self.model.critic.parameters(), self.model.critic_target.parameters())
-        for theta, theta_old in params:
-            theta_old.data.copy_(self.tau * theta_old.data + (1.0 - self.tau) * theta.data) 
-    
-    @torch.no_grad()
-    def act(self, state: np.ndarray, deterministic: bool=False) -> np.ndarray:
-        state_t = torch.as_tensor(state, dtype=torch.float32, device=self.device)
-        action_t = self.model.act(state_t, deterministic)
-        return action_t.squeeze(0).cpu().numpy()
+        self.env_eval_stats = EnvEvaluationStats()
 
     def train(self, env: gym.Env) -> None:
         self.cache_env_settings(env)
@@ -107,45 +104,25 @@ class ControllerTrainer(BaseTrainer):
             state, done = self.collect_transition(env, state)
             self.train_n_steps()
             self.handle_periodic_tasks(episode, step)
+            
             if done: 
-                self.reset_env(env)
+                state = self.reset_env(env)
                 episode += 1
-
-    def evaluate(self, step: int) -> None:
-        env = gym.make(self.env_id_, render_mode="rgb_array")        
-        env = ActionWrapper(env) 
-        returns = np.zeros(self.n_eval_episodes, dtype=np.float32)    
-        for ep in range(self.n_eval_episodes): 
-            obs, _ = env.reset(seed=self.seed + 100 + ep)
-            state = self.world_model.reset(obs)
-            done = False
-
-            while not done: 
-                action = self.act(state, deterministic=True)
-                obs_next, reward, terminated, truncated, _ = env.step(action)
-                state_next = self.world_model.step(action, obs_next)
-                done = terminated or truncated
-                state = state_next
-
-                returns[ep] += reward
-
-        average_return = float(np.mean(returns).item())
-        self.env_eval_stats.append_step(step)
-        self.env_eval_stats.append_return(average_return)
 
     def train_n_steps(self) -> None:
         self.model.train()
         for _ in range(self.n_gradient_steps):
             s, a, r, s_nxt, d = self.buffer.sample()
+            alpha = self.log_alpha.exp().detach()
 
-            # Compute targets for Q functions
+            # =============== Compute targets for Q functions =================
             with torch.no_grad():
-                a_tilde, logp_a_tilde = self.model.sample(s_nxt)                        # [B, action_dim], [B]
-                q1_nxt, q2_nxt = self.model.critic_target(s_nxt, a_tilde)               # [B], [B]
-                q_target = torch.min(q1_nxt, q2_nxt) - self.entropy_coef * logp_a_tilde # [B]
-                td_target = r + self.gamma * (1.0 - d) * q_target                       # [B]
+                a_tilde, logp_a_tilde = self.model.sample(s_nxt)                    # [B, action_dim], [B]
+                q1_nxt, q2_nxt = self.model.critic_target(s_nxt, a_tilde)           # [B], [B]
+                q_target = torch.min(q1_nxt, q2_nxt) - alpha * logp_a_tilde         # [B]
+                td_target = r + self.gamma * (1.0 - d) * q_target                   # [B]
 
-            # Update Q functions
+            # ===================== Update Q functions ========================
             q1, q2 = self.model.critic(s, a)
             loss_q1 = F.mse_loss(q1, td_target)
             loss_q2 = F.mse_loss(q2, td_target)
@@ -158,18 +135,32 @@ class ControllerTrainer(BaseTrainer):
             for p in self.model.critic.parameters():
                 p.requires_grad = False
 
-            # Compute policy loss
-            a_tilde, logp_a_tilde = self.model.sample(s)                                # [B_action_dim], [B]
-            q1, q2 = self.model.critic(s, a_tilde)                                      # [B], [B]
-            q_target = torch.min(q1, q2) - self.entropy_coef * logp_a_tilde             # [B]
+            # ========================= Update policy =========================
+            a_tilde, logp_a_tilde = self.model.sample(s)                           # [B_action_dim], [B]
+            q1, q2 = self.model.critic(s, a_tilde)                                 # [B], [B]
+            q_target = torch.min(q1, q2) - alpha * logp_a_tilde                    # [B]
             loss_actor = torch.mean(-q_target)
             
             self.optimizer_actor.zero_grad() 
             loss_actor.backward()
             self.optimizer_actor.step()
             
+            # =================== Update entropy coeficient ===================
+            # Read more here: https://arxiv.org/abs/1812.05905
+            alpha = self.log_alpha.exp()
+            loss_alpha = torch.mean(
+                -alpha * logp_a_tilde.detach() - alpha * self.target_entropy
+            )
+
+            self.optimizer_alpha.zero_grad() 
+            loss_alpha.backward()
+            self.optimizer_alpha.step()
+
             for p in self.model.critic.parameters():
                 p.requires_grad = True
+
+            # ==================== Update target networks =====================
+            self.update_target_networks()
 
     def collect_transition(self, env: gym.Env, state: np.ndarray) -> tuple[np.ndarray, bool]:
         self.model.eval()
@@ -177,7 +168,6 @@ class ControllerTrainer(BaseTrainer):
 
         obs_next, reward, terminated, truncated, _ = env.step(action)
         state_next = self.world_model.step(action, obs_next)
-        reward *= self.reward_scale
 
         done = terminated or truncated
         done_td = terminated
@@ -196,7 +186,7 @@ class ControllerTrainer(BaseTrainer):
             action = env.action_space.sample()
             obs_next, reward, terminated, truncated, _ = env.step(action)
             state_next = self.world_model.step(action, obs_next)
-
+            
             done = terminated or truncated
             done_td = terminated
 
@@ -206,6 +196,45 @@ class ControllerTrainer(BaseTrainer):
             if done:
                 state = self.reset_env(env)
                 done = False
+
+    @torch.no_grad()
+    def evaluate(self, step: int) -> None:
+        env = gym.make(self.env_id_, render_mode="rgb_array")        
+        env = ActionWrapper(env) 
+        returns = np.zeros(self.n_eval_episodes, dtype=np.float32)    
+        for ep in range(self.n_eval_episodes): 
+            obs, _ = env.reset(seed=self.seed + 1000 + ep)
+            state = self.world_model.reset(obs)
+            done = False
+
+            while not done: 
+                action = self.act(state, deterministic=True)
+                obs_next, reward, terminated, truncated, _ = env.step(action)
+                state_next = self.world_model.step(action, obs_next)
+                done = terminated or truncated
+                state = state_next
+
+                returns[ep] += reward
+
+        average_return = float(np.mean(returns).item())
+        self.env_eval_stats.append_step(step)
+        self.env_eval_stats.append_return(average_return)
+
+    @torch.no_grad()
+    def act(self, state: np.ndarray, deterministic: bool=False) -> np.ndarray:
+        state_t = torch.as_tensor(state, dtype=torch.float32, device=self.device)
+        action_t = self.model.act(state_t, deterministic)
+        return action_t.squeeze(0).cpu().numpy()
+
+    @torch.no_grad()
+    def update_target_networks(self) -> None:
+        params = zip(self.model.critic.parameters(), self.model.critic_target.parameters())
+        for theta, theta_old in params:
+            theta_old.data.copy_(self.tau * theta.data + (1.0 - self.tau) * theta_old.data) 
+
+    def reset_env(self, env: gym.Env) -> np.ndarray:
+        obs, _ = env.reset()
+        return self.world_model.reset(obs)
 
     def handle_periodic_tasks(self, episode: int, step: int) -> None:
         if step % self.eval_every == 0:
@@ -219,13 +248,6 @@ class ControllerTrainer(BaseTrainer):
         
         if step % self.save_every == 0:
             self.save_stats()
-
-        if step % self.update_target_every == 0:
-            self.update_target_networks()
-
-    def reset_env(self, env: gym.Env, seed: int | None = None) -> np.ndarray:
-        obs, _ = env.reset(seed=seed)
-        return self.world_model.reset(obs) 
 
     def cache_env_settings(self, env: gym.Env) -> None:
         assert isinstance(env, gym.Env), (

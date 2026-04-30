@@ -13,12 +13,12 @@ class Encoder(nn.Module):
     World Models, Ha and Schmidhuber 2018.
     https://arxiv.org/abs/1803.10122
     """   
-    def __init__(self, n_channels: int, z_dim: int) -> None:
+    def __init__(self, n_channels: int, latent_dim: int) -> None:
         super().__init__()
         assert n_channels > 0, f"in_channels should be > 0, got: {n_channels}"
-        assert z_dim > 0, f"z_dim should be > 0, got: {z_dim}"
+        assert latent_dim > 0, f"latent_dim should be > 0, got: {latent_dim}"
         self.n_channels = n_channels
-        self.z_dim = z_dim
+        self.latent_dim = latent_dim
 
         self.cnn = nn.Sequential(
             # [B, n_channels, 64, 64] -> [B, 32, 31, 31] 
@@ -38,14 +38,14 @@ class Encoder(nn.Module):
             nn.ReLU(True),
         )
 
-        self.mu = nn.Linear(1024, z_dim)
-        self.log_std = nn.Linear(1024, z_dim)
+        self.mu = nn.Linear(1024, latent_dim)
+        self.log_std = nn.Linear(1024, latent_dim)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h = self.cnn(x).view(-1, 1024)      # [B, 1024]
-        mu = self.mu(h)                     # [B, z_dim]
-        log_std = self.log_std(h)           # [B, z_dim]
-        std = F.softplus(log_std) + 1e-6    # [B, z_dim]
+    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        h = self.cnn(obs).view(-1, 1024)    # [B, 1024]
+        mu = self.mu(h)                     # [B, latent_dim]
+        log_std = self.log_std(h)           # [B, latent_dim]
+        std = F.softplus(log_std) + 1e-6    # [B, latent_dim]
         return mu, std
 
 
@@ -57,15 +57,15 @@ class Decoder(nn.Module):
     World Models, Ha and Schmidhuber 2018.
     https://arxiv.org/abs/1803.10122
     """ 
-    def __init__(self, n_channels: int, z_dim: int) -> None:
+    def __init__(self, n_channels: int, latent_dim: int) -> None:
         super().__init__()
         assert n_channels > 0, f"in_channels should be > 0, got: {n_channels}"
-        assert z_dim > 0, f"z_dim should be > 0, got: {z_dim}"
+        assert latent_dim > 0, f"latent_dim should be > 0, got: {latent_dim}"
         self.n_channels = n_channels
-        self.z_dim = z_dim
+        self.latent_dim = latent_dim
 
         # [B, n_channels] -> [B, 1024]
-        self.dense = nn.Linear(z_dim, 1024)
+        self.dense = nn.Linear(latent_dim, 1024)
 
         self.dcnn = nn.Sequential(
             # [B, 1024, 1, 1] -> [B, 128, 5, 5]
@@ -85,45 +85,45 @@ class Decoder(nn.Module):
             nn.Sigmoid() 
         )
     
-    def forward(self, z: torch.Tensor) -> torch.Tensor:
-        h = self.dense(z)                  # [B, 1024]
+    def forward(self, latent: torch.Tensor) -> torch.Tensor:
+        h = self.dense(latent)             # [B, 1024]
         h = h.view(-1, 1024, 1, 1)         # [B, 1024, 1, 1]
         x = self.dcnn(h)                   # [B, n_channels, 64, 64] 
         return x 
 
 
 class ConvVAE(nn.Module):
-    def __init__(self, n_channels: int, z_dim: int) -> None:
+    def __init__(self, n_channels: int, latent_dim: int) -> None:
         super().__init__()
         assert n_channels > 0, f"in_channels should be > 0, got: {n_channels}"
-        assert z_dim > 0, f"z_dim should be > 0, got: {z_dim}"
+        assert latent_dim > 0, f"latent_dim should be > 0, got: {latent_dim}"
         self.n_channels = n_channels
-        self.z_dim = z_dim
+        self.latent_dim = latent_dim
 
-        self.encoder = Encoder(n_channels, z_dim)  
-        self.decoder = Decoder(n_channels, z_dim)
+        self.encoder = Encoder(n_channels, latent_dim)  
+        self.decoder = Decoder(n_channels, latent_dim)
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        mu, std = self.encoder(x)                                               # [B, z_dim], [B, z_dim]
-        z = mu + std * torch.randn_like(std)                                    # [B, z_dim]
+    def forward(self, obs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        mu, std = self.encoder(obs)                                             # [B, z_dim], [B, z_dim]
+        latent = mu + std * torch.randn_like(std)                               # [B, z_dim]
         kl = -0.5 * (mu.pow(2) + std.pow(2) - torch.log(std.pow(2) + 1e-8) - 1) # [B, z_dim]
         kl = torch.sum(kl, dim=1)                                               # [B]
-        x_recon = self.decoder(z)                                               # [B, n_channels, 64, 64]
-        return x_recon, kl
+        obs_recon = self.decoder(latent)                                        # [B, n_channels, 64, 64]
+        return obs_recon, kl
 
-    def sample(self, x: torch.Tensor) -> torch.Tensor:
-        mu, std = self.encoder(x)                                               # [B, z_dim], [B, z_dim]
-        z = mu + std * torch.randn_like(std)                                    # [B, z_dim]
-        return z
+    def sample_latent(self, obs: torch.Tensor) -> torch.Tensor:
+        mu, std = self.encoder(obs)                                             # [B, z_dim], [B, z_dim]
+        latent = mu + std * torch.randn_like(std)                               # [B, z_dim]
+        return latent
 
-    def encode(self, x: torch.Tensor) -> torch.Tensor:
-        mu, _ = self.encoder(x)                                                 # [B, z_dim]
-        return mu 
+    def encode(self, obs: torch.Tensor) -> torch.Tensor:
+        latent, _ = self.encoder(obs)                                           # [B, z_dim]
+        return latent 
     
-    def decode(self, z: torch.Tensor) -> torch.Tensor:
-        return self.decoder(z)                                                  # [B, n_channels, 64, 64]
+    def decode(self, latent: torch.Tensor) -> torch.Tensor:
+        return self.decoder(latent)                                             # [B, n_channels, 64, 64]
 
     def save_name(self) -> str:
         save_name = f"vae-cin{self.n_channels}"
-        save_name += f"-z{self.z_dim}.pt"
+        save_name += f"-z{self.latent_dim}.pt"
         return save_name

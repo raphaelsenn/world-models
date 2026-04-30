@@ -27,7 +27,7 @@ class MemoryLoss(nn.Module):
         """ 
         B, L, n_mixtures, z_dim = mu.shape
 
-        pi_logits = pi_logits.view(B*L, n_mixtures) # [B * L, n_mixtures]
+        pi_logits = pi_logits.reshape(B*L, n_mixtures) # [B * L, n_mixtures]
         log_pi = torch.log_softmax(
             pi_logits, dim=-1
         )                                           # [B * L, n_mixtures] 

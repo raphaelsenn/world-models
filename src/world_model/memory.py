@@ -37,7 +37,7 @@ class MDN(nn.Module):
         pi_logits = self.pi(hidden)
         mu = self.mu(hidden)
         log_std = self.logstd(hidden)
-        log_std = log_std.clamp(-20, 2)
+        log_std = log_std.clamp(-7, 2)
         std = torch.exp(log_std)
 
         new_shape = hidden.shape[:-1] + (self.n_mixtures, self.z_dim)
@@ -62,20 +62,21 @@ class Memory(nn.Module):
     """
     def __init__(
             self, 
-            z_dim: int, 
+            latent_dim: int, 
             action_dim: int, 
             hidden_dim: int, 
             n_mixtures: int
    ) -> None:
         super().__init__()
-        self.z_dim = z_dim
+        self.latent_dim = latent_dim
         self.action_dim = action_dim
         self.hidden_dim = hidden_dim
         self.n_mixtures = n_mixtures
 
-        # NOTE: Ha and Schmidhuber used a LSTM, i use a GRU.
-        self.rnn = nn.GRU(z_dim + action_dim,  hidden_dim, batch_first=True)
-        self.mdn = MDN(z_dim, hidden_dim, n_mixtures)
+        # NOTE: Ha and Schmidhuber used LSTM, i use a GRU.
+        # self.rnn = nn.LSTM(latent_dim + action_dim,  hidden_dim, batch_first=True)
+        self.rnn = nn.GRU(latent_dim + action_dim,  hidden_dim, batch_first=True)
+        self.mdn = MDN(latent_dim, hidden_dim, n_mixtures)
 
     def forward(
             self, 
@@ -87,16 +88,16 @@ class Memory(nn.Module):
         
         Input:
         ------ 
-        latent : [B, L, z_dim]
+        latent : [B, L, latent_dim]
         action : [B, L, action_dim]
         """ 
-        cat = torch.cat([latent, action], dim=-1)
-        output, _ = self.rnn(cat)
-        pi_logits, mu, std = self.mdn(output)
+        cat = torch.cat([latent, action], dim=-1)       # [B, L, z_dim + action_dim]
+        output, _ = self.rnn(cat)                       # [B, L, hidden_dim]
+        pi_logits, mu, std = self.mdn(output)           # [B, K], [B, K, action_dim] (mu and std)
         return pi_logits, mu, std
 
     @torch.no_grad() 
-    def step(
+    def predict_next_dist(
             self, 
             latent_prev: torch.Tensor, 
             action_prev: torch.Tensor,
@@ -107,27 +108,24 @@ class Memory(nn.Module):
 
         Input:
         ------ 
-        latent      : [B, z_dim]
+        latent      : [B, latent_dim]
         action      : [B, action_dim]
         hidden_prev : [B, hidden_dim]
         """ 
-        cat = torch.cat([latent_prev, action_prev], dim=-1)       # [B, z_dim + action_dim]
-        
-        cat = cat.unsqueeze(1)                          # [B, 1, z_dim + action_dim]
-        hidden_prev = hidden_prev.unsqueeze(1)          # [B, 1, hidden_dim]
-        hidden_prev = hidden_prev.permute(1, 0, 2)      # [1, B, hidden_dim]
+        cat = torch.cat([
+            latent_prev, action_prev], dim=-1
+        ).unsqueeze(1)                                  # [B, 1, z_dim + action_dim]
 
-        output, hidden = self.rnn(cat, hidden_prev)
-        out = output[:, -1, :]                          # [B, hidden_dim]
+        hidden_prev = hidden_prev.unsqueeze(0)          # [1, B, hidden_dim]
 
-        pi_logits, mu, std = self.mdn(out)              # [B, K], [B, K, z_dim], [B, K, z_dim]
-        
+        _, hidden = self.rnn(cat, hidden_prev)          # [1, B, hidden_dim]
         hidden = hidden.squeeze(0)                      # [B, hidden_dim]
+        pi_logits, mu, std = self.mdn(hidden)           # [B, K], [B, K, z_dim], [B, K, z_dim]
 
         return pi_logits, mu, std, hidden
 
     @torch.no_grad()
-    def encode(
+    def predict_next_hidden(
             self, 
             latent_prev: torch.Tensor, 
             action_prev: torch.Tensor, 
@@ -138,15 +136,17 @@ class Memory(nn.Module):
         
         Input:
         ------ 
-        latent      : [B, z_dim]
+        latent      : [B, latent_dim]
         action      : [B, action_dim]
         hidden_prev : [B, hidden_dim]
         """  
-        _, _, _, hidden = self.step(latent_prev, action_prev, hidden_prev) 
+        _, _, _, hidden = self.predict_next_dist(
+            latent_prev, action_prev, hidden_prev
+        ) 
         return hidden
     
     @torch.no_grad()
-    def sample(
+    def sample_next_latent(
             self, 
             latent_prev: torch.Tensor, 
             action_prev: torch.Tensor, 
@@ -157,23 +157,26 @@ class Memory(nn.Module):
         
         Input:
         ------ 
-        latent      : [B, z_dim]
+        latent      : [B, latent_dim]
         action      : [B, action_dim]
         hidden_prev : [B, hidden_dim]
         """  
-        pi_logits, mu, std, hidden = self.step(latent_prev, action_prev, hidden_prev) 
+        B = latent_prev.size(0) 
+        pi_logits, mu, std, hidden = self.predict_next_dist(
+            latent_prev, action_prev, hidden_prev
+        ) 
         
         mix = Categorical(logits=pi_logits)                          # [B]
         comp_idx = mix.sample()                                      # [B]
 
-        batch_idx = torch.arange(latent_prev.size(0), device=latent_prev.device)
+        batch_idx = torch.arange(B, device=latent_prev.device)
         mu_sel = mu[batch_idx, comp_idx, :]                          # [B, z_dim]
         std_sel = std[batch_idx, comp_idx, :]                        # [B, z_dim]
 
         latent_next = Normal(mu_sel, std_sel).sample()               # [B, z_dim]
         return latent_next, hidden
-    
+
     def save_name(self) -> str:
-        save_name = f"mdn-rnn-z{self.z_dim}"
+        save_name = f"mdn-rnn-z{self.latent_dim}"
         save_name += f"-h{self.hidden_dim}.pt"
         return save_name

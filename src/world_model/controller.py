@@ -14,25 +14,32 @@ class Actor(nn.Module):
             self, 
             state_dim: int, 
             action_dim: int, 
-            hidden_dim: int
+            fc_dim: int
     ) -> None:
         super().__init__()
 
         self.mlp = nn.Sequential(
-            nn.Linear(state_dim, hidden_dim),
+            nn.Linear(state_dim, fc_dim),
             nn.ReLU(True),
 
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(fc_dim, fc_dim),
             nn.ReLU(True),
         )
 
-        self.mu = nn.Linear(hidden_dim, action_dim)
-        self.log_std = nn.Linear(hidden_dim, action_dim)
+        self.mu = nn.Linear(fc_dim, action_dim)
+        self.log_std = nn.Linear(fc_dim, action_dim)
 
     def forward(
             self, 
             state: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        NOTE: state_dim = latent_dim + hidden_dim
+
+        Input:
+        ------ 
+        state : [B, state_dim] (np.float32)
+        """  
         h = self.mlp(state)
 
         mu = self.mu(h)                     # [B, action_dim]
@@ -43,6 +50,13 @@ class Actor(nn.Module):
         return mu, std
     
     def act(self, state: torch.Tensor, deterministic: bool=False) -> torch.Tensor:
+        """
+        NOTE: state_dim = latent_dim + hidden_dim
+
+        Input:
+        ------ 
+        state : [B, state_dim] (np.float32)
+        """   
         mu, std = self(state)
 
         if deterministic:
@@ -53,19 +67,21 @@ class Actor(nn.Module):
         return torch.tanh(a_pre_tanh)       # [B, action_dim]
 
     def sample(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Differentiable w.r.t. action.""" 
-        h = self.mlp(state)                 # [B, fc_dim]
+        """
+        NOTE: state_dim = latent_dim + hidden_dim
 
-        mu = self.mu(h)                     # [B, action_dim]
-        log_std = self.log_std(h)           # [B, action_dim]
-        log_std = log_std.clamp(-20, 2)     # [B, action_dim]
-        std = torch.exp(log_std)            # [B, action_dim]
+        Input:
+        ------ 
+        state : [B, state_dim] (np.float32)
+        """   
+        mu, std = self(state)               # [B, action_dim] (both)
 
         dist = Normal(mu, std)
         a_pre_tanh = dist.rsample()         # [B, action_dim]
         a_tanh = torch.tanh(a_pre_tanh)     # [B, action_dim]
 
         # Log-prob correction
+        # Deriving this is fun! 
         log_prob = dist.log_prob(a_pre_tanh)# [B, action_dim]
         log_prob = log_prob.sum(dim=-1)     # [B]
         log_prob -= (
@@ -125,6 +141,12 @@ class Critic(nn.Module):
             state: torch.Tensor,
             action: torch.Tensor
     ) -> torch.Tensor:
+        """
+        Input:
+        ------ 
+        state   : [B, state_dim]    (np.float32)
+        action  : [B, action_dim]   (np.float32) 
+        """   
         cat = torch.cat([state, action], dim=-1)    # [1, state_dim + action_dim] 
         q1 = self.Q1(cat)                           # [B, 1]
         return q1.view(-1)                          # [B]
@@ -134,6 +156,12 @@ class Critic(nn.Module):
             state: torch.Tensor,
             action: torch.Tensor
     ) -> torch.Tensor:
+        """
+        Input:
+        ------ 
+        state   : [B, state_dim]    (np.float32)
+        action  : [B, action_dim]   (np.float32) 
+        """    
         cat = torch.cat([state, action], dim=-1)    # [1, state_dim + action_dim] 
         q2 = self.Q2(cat)                           # [B, 1]
         return q2.view(-1)                          # [B]
@@ -176,15 +204,30 @@ class Controller(nn.Module):
         self.critic_target = copy.deepcopy(self.critic)
 
     def forward(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Input:
+        ------ 
+        state   : [B, state_dim]    (np.float32)
+        """    
         return self.actor(state) 
 
     @torch.no_grad()
     def act(self, state: torch.Tensor, deterministic: bool=True) -> torch.Tensor:
-        """Returns a non-differentiable action w.r.t. actor parameters."""
+        """Returns a non-differentiable action w.r.t. actor parameters.
+        
+        Input:
+        ------ 
+        state   : [B, state_dim]    (np.float32)
+        """
         return self.actor.act(state, deterministic)
 
     def sample(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Returns a differentiable action w.r.t. actor parameters."""
+        """Returns a differentiable action w.r.t. actor parameters.
+        
+        Input:
+        ------ 
+        state   : [B, state_dim]    (np.float32) 
+        """
         return self.actor.sample(state)
 
     def q(
@@ -192,6 +235,12 @@ class Controller(nn.Module):
             state: torch.Tensor, 
             action: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Input:
+        ------ 
+        state   : [B, state_dim]    (np.float32)
+        action  : [B, action_dim]   (np.float32)
+        """
         return self.critic(state, action)
 
     def save_name(self) -> str:

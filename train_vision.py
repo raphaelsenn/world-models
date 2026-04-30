@@ -17,13 +17,13 @@ def parse_args() -> Namespace:
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--n_timesteps", type=int, default=10_000_000)
     parser.add_argument("--horizon", type=int, default=100_000)
-    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--batch_size", type=int, default=512)
 
-    parser.add_argument("--learning_rate", type=float, default=1e-3)
+    parser.add_argument("--learning_rate", type=float, default=0.001)
     parser.add_argument("--weight_decay", type=float, default=0.0)
-    parser.add_argument("--kl_weight", type=float, default=1e-4)
+    parser.add_argument("--kl_weight", type=float, default=1.0)
 
-    parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--device", type=str, default="mps")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--n_workers", type=int, default=0)
     parser.add_argument("--pin_memory", type=bool, default=False)
