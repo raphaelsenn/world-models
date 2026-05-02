@@ -1,6 +1,4 @@
 import torch
-import torch.nn as nn
-from torch.optim import Optimizer
 from torch.utils.data import DataLoader, TensorDataset
 
 import pandas as pd
@@ -10,7 +8,7 @@ from src.world_model.vision import ConvVAE
 from src.loss import VisionLoss
 from src.data.vision_buffer import VisionBuffer
 from src.trainer.base_trainer import BaseTrainer
-from src.utils.prepro import preprocess_observation
+from src.utils.prepro import preprocess_observation, random_action
 
 
 class VisionTrainer(BaseTrainer):
@@ -53,20 +51,23 @@ class VisionTrainer(BaseTrainer):
         self.verbose = verbose
 
         self.obs_ = None
+        self.step_ = 0
 
     def collect_data(self, env: gym.Env) -> None:
         for _ in range(0, self.horizon):
             obs = preprocess_observation(self.obs_)
             
-            action = env.action_space.sample()
+            action = random_action(self.step_)
             obs_nxt, _, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
-            
+
             self.buffer.push(obs)
             self.obs_ = obs_nxt
+            self.step_ += 1
 
             if done:
                 self.obs_, _ = env.reset()
+                self.step_ = 0
 
     def train_one_epoch(self, dataloader: DataLoader) -> float:
         self.model.train() 

@@ -21,9 +21,9 @@ def parse_args() -> Namespace:
 
     parser.add_argument("--learning_rate", type=float, default=0.001)
     parser.add_argument("--weight_decay", type=float, default=0.0)
-    parser.add_argument("--kl_weight", type=float, default=1.0)
+    parser.add_argument("--kl_weight", type=float, default=1e-5)
 
-    parser.add_argument("--device", type=str, default="mps")
+    parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--n_workers", type=int, default=0)
     parser.add_argument("--pin_memory", type=bool, default=False)

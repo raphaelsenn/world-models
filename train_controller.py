@@ -33,7 +33,7 @@ def parse_args() -> Namespace:
     parser.add_argument("--buffer_capacity", type=int, default=1_000_000)
     parser.add_argument("--buffer_start_size", type=int, default=256)
     parser.add_argument("--batch_size", type=int, default=256)
-    parser.add_argument("--device", type=str, default="mps")
+    parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--seed", type=int, default=300_000)
 
     # Optimization

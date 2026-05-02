@@ -1,8 +1,6 @@
 import math
 
 import torch
-import torch.nn as nn
-from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 
 import pandas as pd
