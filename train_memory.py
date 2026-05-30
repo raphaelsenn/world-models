@@ -13,25 +13,24 @@ def parse_args() -> Namespace:
     parser.add_argument("--memory_dataset", type=str, default="MDN-RNN-Dataset-CarRacing-v3")
 
     parser.add_argument("--z_dim", type=int, default=32)
-    parser.add_argument("--action_dim", type=int, default=2)
+    parser.add_argument("--action_dim", type=int, default=3)
     parser.add_argument("--hidden_dim", type=int, default=256)
     parser.add_argument("--n_mixtures", type=int, default=5)
 
-    parser.add_argument("--epochs", type=int, default=1000)
-    parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--learning_rate", type=float, default=0.0001)
+    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--seq_len", type=int, default=999)             # Teacher forcing (shifted by 1)
+    parser.add_argument("--learning_rate", type=float, default=0.0003)
+    parser.add_argument("--grad_clip", type=float, default=1.0)
     parser.add_argument("--weight_decay", type=float, default=0.0)
 
-    parser.add_argument("--device", type=str, default="cpu")
-    parser.add_argument("--n_workers", type=str, default=0)
-    parser.add_argument("--pin_memory", type=bool, default=False)
+    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--n_workers", type=str, default=4)
+    parser.add_argument("--pin_memory", type=bool, default=True)
     parser.add_argument("--seed", type=int, default=0)
 
     parser.add_argument("--eval_every", type=int, default=1)
     parser.add_argument("--save_every", type=int, default=1)
-
-    parser.add_argument("--no-verbose", action="store_false", dest="verbose")
-    parser.set_defaults(verbose=True)
+    parser.add_argument("--verbose", type=bool, default=True)
 
     return parser.parse_args()
 
@@ -42,10 +41,10 @@ def set_seeds(seed: int) -> None:
 
 
 def create_dataloaders(args: Namespace) -> tuple[DataLoader, ...]:
-    mem_dataset = MemoryDataset(args.memory_dataset)
+    mem_dataset = MemoryDataset(args.memory_dataset, args.seq_len)
     mem_len = len(mem_dataset)
 
-    train_len = int(0.95 * mem_len)
+    train_len = int(0.99 * mem_len)
     val_len = mem_len - train_len
 
     if args.verbose:
@@ -60,7 +59,7 @@ def create_dataloaders(args: Namespace) -> tuple[DataLoader, ...]:
 
     train_loader = DataLoader(
         dataset=trainset,
-        batch_size=args.batch_size,
+        batch_size=1,
         shuffle=True,
         num_workers=args.n_workers,
         pin_memory=args.pin_memory,
@@ -68,7 +67,7 @@ def create_dataloaders(args: Namespace) -> tuple[DataLoader, ...]:
     
     val_loader = DataLoader(
         dataset=val_set,
-        batch_size=args.batch_size,
+        batch_size=1,
         shuffle=False,
         num_workers=args.n_workers,
         pin_memory=args.pin_memory,

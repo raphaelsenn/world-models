@@ -17,6 +17,7 @@ class ControllerBuffer:
         self.capacity = capacity
         self.batch_size = batch_size
         self.position = 0
+        self.size = 0
         
         self.states = np.empty((capacity, state_dim), dtype=np.float32)
         self.actions = np.empty((capacity, action_dim), dtype=np.float32)
@@ -35,7 +36,7 @@ class ControllerBuffer:
             done: bool
     ) -> None:
         i = self.position
-        
+
         self.states[i] = state.astype(np.float32)
         self.actions[i] = action.astype(np.float32)
         self.rewards[i] = float(reward)
@@ -43,9 +44,10 @@ class ControllerBuffer:
         self.dones[i] = float(done)
 
         self.position = (i + 1) % self.capacity
+        self.size = min(self.size + 1, self.capacity)
 
     def sample(self) -> Tuple[torch.Tensor, ...]:
-        indices = np.random.randint(0, self.position, size=(self.batch_size,))
+        indices = np.random.randint(0, self.size, size=(self.batch_size,))
 
         states = torch.as_tensor(
             self.states[indices], dtype=torch.float32, device=self.device

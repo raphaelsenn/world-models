@@ -8,7 +8,7 @@ from torch.utils.data import Dataset
 
 
 class MemoryDataset(Dataset):
-    def __init__(self, root: str, seq_len: int=64) -> None:
+    def __init__(self, root: str, seq_len: int=999) -> None:
         super().__init__()
 
         assert os.path.isdir(root), f"{root} does not exist."
@@ -26,8 +26,6 @@ class MemoryDataset(Dataset):
 
             with np.load(file_path) as episode:
                 ep_len = len(episode["latents"])
-
-            if ep_len >= self.seq_len + 1:
                 self.files.append(file)
                 self.lengths.append(ep_len)
         
@@ -42,7 +40,18 @@ class MemoryDataset(Dataset):
         episode = np.load(file_path)
         ep_len = self.lengths[index]
 
-        max_start = ep_len - self.seq_len - 1
+        if ep_len <= self.seq_len:
+            latents = torch.as_tensor(
+                episode["latents"], 
+                dtype=torch.float32
+            )
+            actions = torch.as_tensor(
+                episode["actions"], 
+                dtype=torch.float32
+            )
+            return latents, actions
+
+        max_start = ep_len - self.seq_len
         start = np.random.randint(0, max_start)
         end = start + self.seq_len + 1
 

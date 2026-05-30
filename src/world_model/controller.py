@@ -10,10 +10,10 @@ import numpy as np
 
 
 class Actor(nn.Module):
+    """Actor designed for CarRacing-v3."""
     def __init__(
             self, 
             state_dim: int, 
-            action_dim: int, 
             fc_dim: int
     ) -> None:
         super().__init__()
@@ -26,8 +26,8 @@ class Actor(nn.Module):
             nn.ReLU(True),
         )
 
-        self.mu = nn.Linear(fc_dim, action_dim)
-        self.log_std = nn.Linear(fc_dim, action_dim)
+        self.mu = nn.Linear(fc_dim, 3)
+        self.log_std = nn.Linear(fc_dim, 3)
 
     def forward(
             self, 
@@ -38,14 +38,14 @@ class Actor(nn.Module):
 
         Input:
         ------ 
-        state : [B, state_dim] (np.float32)
+        state : [B, state_dim]
         """  
         h = self.mlp(state)
 
-        mu = self.mu(h)                     # [B, action_dim]
-        log_std = self.log_std(h)           # [B, action_dim]
-        log_std = log_std.clamp(-20, 2)     # [B, action_dim]
-        std = torch.exp(log_std)            # [B, action_dim]
+        mu = self.mu(h)                     # [B, 3]
+        log_std = self.log_std(h)           # [B, 3]
+        log_std = log_std.clamp(-20, 2)     # [B, 3]
+        std = torch.exp(log_std)            # [B, 3]
 
         return mu, std
     
@@ -55,47 +55,71 @@ class Actor(nn.Module):
 
         Input:
         ------ 
-        state : [B, state_dim] (np.float32)
+        state : [B, state_dim]
         """   
         mu, std = self(state)
 
         if deterministic:
-            return torch.tanh(mu)
+            u = mu
+        else:
+            dist = Normal(mu, std)
+            u = dist.sample()
+        
+        u_steer = u[:, 0].unsqueeze(1)
+        u_gas = u[:, 1].unsqueeze(1)
+        u_brake = u[:, 2].unsqueeze(1)
 
-        dist = Normal(mu, std)
-        a_pre_tanh = dist.sample()          # [B, action_dim]
-        return torch.tanh(a_pre_tanh)       # [B, action_dim]
+        steer = torch.tanh(u_steer)
+        gas = torch.sigmoid(u_gas)
+        brake = torch.sigmoid(u_brake)
+        action = torch.cat([steer, gas, brake], dim=-1)
+
+        return action
+
 
     def sample(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        NOTE: state_dim = latent_dim + hidden_dim
-
-        Input:
-        ------ 
-        state : [B, state_dim] (np.float32)
-        """   
-        mu, std = self(state)               # [B, action_dim] (both)
+        mu, std = self(state)
 
         dist = Normal(mu, std)
-        a_pre_tanh = dist.rsample()         # [B, action_dim]
-        a_tanh = torch.tanh(a_pre_tanh)     # [B, action_dim]
+        u = dist.rsample()  # [B, 3]
 
-        # Log-prob correction
-        # Deriving this is fun! 
-        log_prob = dist.log_prob(a_pre_tanh)# [B, action_dim]
-        log_prob = log_prob.sum(dim=-1)     # [B]
-        log_prob -= (
-            2*(np.log(2) - a_pre_tanh - F.softplus(-2*a_pre_tanh))
-        ).sum(dim=-1)                      # [B]
+        u_steer = u[:, 0].unsqueeze(1)
+        u_gas = u[:, 1].unsqueeze(1)
+        u_brake = u[:, 2].unsqueeze(1)
 
-        return a_tanh, log_prob
+        steer = torch.tanh(u_steer)
+        gas = torch.sigmoid(u_gas)
+        brake = torch.sigmoid(u_brake)
+
+        action = torch.cat([steer, gas, brake], dim=-1)
+
+        # base Gaussian log-prob
+        log_prob = dist.log_prob(u)  # [B, 3]
+
+        # tanh correction for steering
+        log_det_steer = 2 * (
+            np.log(2) - u_steer - F.softplus(-2 * u_steer)
+        )
+
+        # sigmoid correction for gas/brake
+        log_det_gas = -F.softplus(-u_gas) - F.softplus(u_gas)
+        log_det_brake = -F.softplus(-u_brake) - F.softplus(u_brake)
+        log_det = torch.cat(
+            [log_det_steer, log_det_gas, log_det_brake],
+            dim=-1
+        )
+
+        log_prob = log_prob - log_det
+        log_prob = log_prob.sum(dim=-1)  # [B]
+
+        return action, log_prob
 
 
 class Critic(nn.Module):
     def __init__(
             self, 
             state_dim: int, 
-            action_dim: int, 
+            action_dim: int=3, 
             fc_dim: int=64
     ) -> None:
         super().__init__()
@@ -144,10 +168,10 @@ class Critic(nn.Module):
         """
         Input:
         ------ 
-        state   : [B, state_dim]    (np.float32)
-        action  : [B, action_dim]   (np.float32) 
+        state   : [B, state_dim]
+        action  : [B, action_dim] 
         """   
-        cat = torch.cat([state, action], dim=-1)    # [1, state_dim + action_dim] 
+        cat = torch.cat([state, action], dim=-1)    # [B, state_dim + action_dim] 
         q1 = self.Q1(cat)                           # [B, 1]
         return q1.view(-1)                          # [B]
     
@@ -159,10 +183,10 @@ class Critic(nn.Module):
         """
         Input:
         ------ 
-        state   : [B, state_dim]    (np.float32)
-        action  : [B, action_dim]   (np.float32) 
+        state   : [B, state_dim]
+        action  : [B, action_dim]
         """    
-        cat = torch.cat([state, action], dim=-1)    # [1, state_dim + action_dim] 
+        cat = torch.cat([state, action], dim=-1)    # [B, state_dim + action_dim] 
         q2 = self.Q2(cat)                           # [B, 1]
         return q2.view(-1)                          # [B]
 
@@ -186,28 +210,26 @@ class Controller(nn.Module):
     """ 
     def __init__(
             self, 
-            action_dim: int, 
             latent_dim: int, 
             hidden_dim: int, 
             fc_dim: int, 
     ) -> None:
         super().__init__()
 
-        self.action_dim = action_dim
         self.latent_dim = latent_dim
         self.hidden_dim = hidden_dim
         self.fc_dim = fc_dim
         self.state_dim = latent_dim + hidden_dim
 
-        self.actor = Actor(self.state_dim, action_dim, fc_dim)
-        self.critic = Critic(self.state_dim, action_dim, fc_dim)
+        self.actor = Actor(self.state_dim, fc_dim)
+        self.critic = Critic(self.state_dim, 3, fc_dim)
         self.critic_target = copy.deepcopy(self.critic)
 
     def forward(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Input:
         ------ 
-        state   : [B, state_dim]    (np.float32)
+        state   : [B, state_dim]
         """    
         return self.actor(state) 
 
@@ -217,7 +239,7 @@ class Controller(nn.Module):
         
         Input:
         ------ 
-        state   : [B, state_dim]    (np.float32)
+        state   : [B, state_dim]
         """
         return self.actor.act(state, deterministic)
 
@@ -226,7 +248,7 @@ class Controller(nn.Module):
         
         Input:
         ------ 
-        state   : [B, state_dim]    (np.float32) 
+        state   : [B, state_dim]
         """
         return self.actor.sample(state)
 
@@ -238,8 +260,8 @@ class Controller(nn.Module):
         """
         Input:
         ------ 
-        state   : [B, state_dim]    (np.float32)
-        action  : [B, action_dim]   (np.float32)
+        state   : [B, state_dim]
+        action  : [B, action_dim]
         """
         return self.critic(state, action)
 

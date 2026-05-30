@@ -8,7 +8,7 @@ from src.world_model.vision import ConvVAE
 from src.loss import VisionLoss
 from src.data.vision_buffer import VisionBuffer
 from src.trainer.base_trainer import BaseTrainer
-from src.utils.prepro import preprocess_observation, random_action
+from src.envs.utils import preprocess_observation, random_action
 
 
 class VisionTrainer(BaseTrainer):
@@ -18,10 +18,10 @@ class VisionTrainer(BaseTrainer):
             epochs: int,
             in_channels: int=3,
             n_timesteps: int=10_000_000,
-            horizon: int=100_000,
-            learning_rate: float=0.001,
-            kl_weight: float=0.0001,
-            batch_size: int=64,
+            horizon: int=50_000,
+            learning_rate: float=1e-3,
+            kl_weight: float=1e-5,
+            batch_size: int=512,
             device: str="cpu",
             n_workers: int=0,
             pin_memory: bool=False, 
@@ -53,51 +53,6 @@ class VisionTrainer(BaseTrainer):
         self.obs_ = None
         self.step_ = 0
 
-    def collect_data(self, env: gym.Env) -> None:
-        for _ in range(0, self.horizon):
-            obs = preprocess_observation(self.obs_)
-            
-            action = random_action(self.step_)
-            obs_nxt, _, terminated, truncated, _ = env.step(action)
-            done = terminated or truncated
-
-            self.buffer.push(obs)
-            self.obs_ = obs_nxt
-            self.step_ += 1
-
-            if done:
-                self.obs_, _ = env.reset()
-                self.step_ = 0
-
-    def train_one_epoch(self, dataloader: DataLoader) -> float:
-        self.model.train() 
-        
-        total_loss = 0.0 
-        for x_img in dataloader:
-            x_img = x_img[0].to(self.device)
-            batch_size = x_img.size(0) 
-            
-            x_recon, kl = self.model(x_img)
-
-            loss = self.criterion(x_img, x_recon, kl)
-            total_loss += float(batch_size * loss.item())
-
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
-        mean_loss = total_loss / self.horizon
-        
-        return mean_loss
-
-    def train_n_epochs(self, dataloader: DataLoader, step: int) -> None:
-        total_loss = 0.0 
-        for epoch in range(self.epochs):
-            total_loss += self.train_one_epoch(dataloader)
-
-        mean_loss = total_loss / self.epochs
-        self.stats.append_step(step)
-        self.stats.append_train(mean_loss)
-
     def train(
             self,
             env: gym.Env,
@@ -115,6 +70,51 @@ class VisionTrainer(BaseTrainer):
 
             if self.verbose:
                 print(f"T: {step:9d}\tLoss: {self.stats.last_train_loss:10.8f}")
+
+    def collect_data(self, env: gym.Env) -> None:
+        for _ in range(0, self.horizon):
+            obs = preprocess_observation(self.obs_)
+
+            action = random_action(self.step_)
+            obs_nxt, _, terminated, truncated, _ = env.step(action)
+            done = terminated or truncated
+
+            self.buffer.push(obs)
+            self.obs_ = obs_nxt
+            self.step_ += 1
+
+            if done:
+                self.obs_, _ = env.reset()
+                self.step_ = 0
+
+    def train_n_epochs(self, dataloader: DataLoader, step: int) -> None:
+        total_loss = 0.0 
+        for epoch in range(self.epochs):
+            total_loss += self.train_one_epoch(dataloader)
+
+        mean_loss = total_loss / self.epochs
+        self.stats.append_step(step)
+        self.stats.append_train(mean_loss)
+
+    def train_one_epoch(self, dataloader: DataLoader) -> float:
+        self.model.train() 
+        
+        total_loss = 0.0 
+        for x_img in dataloader:
+            x_img = x_img[0].to(self.device)
+            batch_size = x_img.size(0)
+
+            x_recon, kl = self.model(x_img)
+
+            loss = self.criterion(x_img, x_recon, kl)
+            total_loss += float(batch_size * loss.item())
+
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+        mean_loss = total_loss / self.horizon
+        
+        return mean_loss
 
     def save_stats(self) -> None:
         save_name: str = self.model.save_name()

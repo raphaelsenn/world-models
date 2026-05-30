@@ -1,6 +1,7 @@
 import math
 
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 
 import pandas as pd
@@ -16,6 +17,7 @@ class MemoryTrainer(BaseTrainer):
             model: Memory,
             epochs: int,
             learning_rate: float=0.001,
+            clip_grad: float=1.0,
             device: str="cpu",
             eval_every: int=1,
             save_every: int=1,
@@ -31,9 +33,25 @@ class MemoryTrainer(BaseTrainer):
 
         self.epochs = epochs
         self.learning_rate = learning_rate
+        self.clip_grad = clip_grad
         self.eval_every = eval_every
         self.save_every = save_every
         self.verbose = verbose
+
+    def train(
+            self, 
+            train_loader: DataLoader, 
+            val_loader: DataLoader | None = None
+    ) -> None:
+        """
+        Args:
+        ----- 
+        train_loader    : Full training data
+        val_loader      : Validation data
+        """ 
+        for epoch in range(self.epochs):
+            self.train_one_epoch(train_loader)
+            self.handle_periodic_tasks(epoch + 1, train_loader, val_loader)
 
     def train_one_epoch(self, dataloader: DataLoader) -> None:
         self.model.train() 
@@ -51,22 +69,8 @@ class MemoryTrainer(BaseTrainer):
 
             self.optimizer.zero_grad()
             loss.backward()
+            nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad)
             self.optimizer.step()
-
-    def train(
-            self, 
-            train_loader: DataLoader, 
-            val_loader: DataLoader | None = None
-    ) -> None:
-        """
-        Args:
-        ----- 
-        train_loader    : Full training data
-        val_loader      : Validation data
-        """ 
-        for epoch in range(self.epochs):
-            self.train_one_epoch(train_loader)
-            self.handle_periodic_tasks(epoch + 1, train_loader, val_loader)
 
     @torch.no_grad()
     def evaluate(self, dataloader: DataLoader) -> float:
@@ -96,17 +100,6 @@ class MemoryTrainer(BaseTrainer):
 
         return average_loss
 
-    def save_stats(self) -> None:
-        save_name: str = self.model.save_name()
-        save_name = save_name.replace(".pt", "_report.csv")
-        if len(self.stats) == 0: return 
-        data = {
-            "step": self.stats.step, 
-            "train_loss": self.stats.train_loss,
-            "val_loss" : self.stats.val_loss
-        }
-        pd.DataFrame.from_dict(data).to_csv(save_name, index=False)
-    
     def handle_periodic_tasks(
         self,
         epoch: int,
@@ -138,3 +131,14 @@ class MemoryTrainer(BaseTrainer):
         if epoch % self.save_every == 0:
             self.save_model()
             self.save_stats()
+
+    def save_stats(self) -> None:
+        save_name: str = self.model.save_name()
+        save_name = save_name.replace(".pt", "_report.csv")
+        if len(self.stats) == 0: return 
+        data = {
+            "step": self.stats.step, 
+            "train_loss": self.stats.train_loss,
+            "val_loss" : self.stats.val_loss
+        }
+        pd.DataFrame.from_dict(data).to_csv(save_name, index=False)

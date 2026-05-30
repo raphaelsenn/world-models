@@ -37,7 +37,7 @@ class MDN(nn.Module):
         pi_logits = self.pi(hidden)
         mu = self.mu(hidden)
         log_std = self.logstd(hidden)
-        log_std = log_std.clamp(-7, 2)
+        log_std = log_std.clamp(-20.0, 2.0)
         std = torch.exp(log_std)
 
         new_shape = hidden.shape[:-1] + (self.n_mixtures, self.z_dim)
@@ -74,7 +74,6 @@ class Memory(nn.Module):
         self.n_mixtures = n_mixtures
 
         # NOTE: Ha and Schmidhuber used LSTM, i use a GRU.
-        # self.rnn = nn.LSTM(latent_dim + action_dim,  hidden_dim, batch_first=True)
         self.rnn = nn.GRU(latent_dim + action_dim,  hidden_dim, batch_first=True)
         self.mdn = MDN(latent_dim, hidden_dim, n_mixtures)
 

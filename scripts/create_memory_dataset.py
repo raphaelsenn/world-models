@@ -8,11 +8,12 @@ import gymnasium as gym
 import torch
 
 from src.world_model import ConvVAE
-from src.utils.wrappers import ActionWrapper
+from src.envs.utils import random_action
 
 
 def preprocess_observation(obs: np.ndarray, obs_tgt_size: int=64) -> np.ndarray:
     """Transform observation [96, 96, 3] -> [3, 64, 64]""" 
+    obs = obs[:84, :, :]
     obs = cv2.resize(obs, (obs_tgt_size, obs_tgt_size), interpolation=cv2.INTER_AREA)
     obs = obs.transpose(2, 0, 1)
     return obs.astype(np.uint8)
@@ -52,21 +53,23 @@ def create_dataset(
         done = False
         env.action_space.seed(seed + (episode - 1)) 
         obs, _ = env.reset(seed=seed + (episode - 1))
-        
+        step = 0
+
         while not done: 
             obs_t = torch.as_tensor(
                 preprocess_observation(obs), dtype=torch.float32, device=device
             ).div_(255.0)
 
             z_t = vae.encode(obs_t).view(-1).cpu().numpy()
-            a_t = env.action_space.sample()
+            a_t = random_action(step)
 
             latents.append(z_t)
             actions.append(a_t)
 
             obs, _, terminated, truncated, _ = env.step(a_t)
             done = terminated or truncated
-            
+            step += 1
+
             if done:
                 path = os.path.join(folder_name, f"episode_{episode:06d}")
                 
@@ -89,9 +92,9 @@ def parse_args() -> Namespace:
     parser.add_argument("--z_dim", type=int, default=32)
 
     parser.add_argument("--env_id", type=str, default="CarRacing-v3")
-    parser.add_argument("--n_episodes", type=int, default=2_000)
-    parser.add_argument("--seed", type=int, default=200_000)
-    parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--n_episodes", type=int, default=10_000)
+    parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--verbose", type=bool, default=True)
 
     return parser.parse_args()
@@ -109,7 +112,6 @@ def main() -> None:
     vae.load_state_dict(torch.load(args.vae_weights, map_location="cpu", weights_only=True))
 
     env = gym.make(args.env_id, render_mode="rgb_array")
-    env = ActionWrapper(env)
 
     create_dataset(vae, env, args.n_episodes, args.seed, args.verbose, args.device)
 

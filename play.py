@@ -14,7 +14,7 @@ def parse_args() -> Namespace:
 
     # World model / controller dims
     parser.add_argument("--in_channels", type=int, default=3)
-    parser.add_argument("--action_dim", type=int, default=3)
+    parser.add_argument("--action_dim", type=int, default=3)    # [-1, 1] x [-1, 1], (Read more in ./src/utils/wrappers.py)
     parser.add_argument("--latent_dim", type=int, default=32)
     parser.add_argument("--hidden_dim", type=int, default=256)
     parser.add_argument("--controller_fc_dim", type=int, default=512)
@@ -25,15 +25,15 @@ def parse_args() -> Namespace:
     parser.add_argument("--weight_memory", type=str, default="mdn-rnn-z32-h256.pt")
 
     # Training
-    parser.add_argument("--n_timesteps", type=int, default=1_300_000)
+    parser.add_argument("--n_timesteps", type=int, default=3_000_000)
     parser.add_argument("--n_gradient_steps", type=int, default=1)
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--tau", type=float, default=0.005)
     parser.add_argument("--buffer_capacity", type=int, default=1_000_000)
-    parser.add_argument("--buffer_start_size", type=int, default=25_000)
+    parser.add_argument("--buffer_start_size", type=int, default=10_000)
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--seed", type=int, default=2)
+    parser.add_argument("--seed", type=int, default=10_000)
 
     # Optimization
     parser.add_argument("--lr_actor", type=float, default=3e-4)
@@ -54,11 +54,30 @@ def set_seeds(seed: int) -> None:
     torch.manual_seed(seed)
 
 
+def play(env, controller) -> None:
+    for ep in range(10): 
+        state, _ = env.reset()
+        done = False
+
+        t = 0
+        total_reward = 0.0
+        while not done: 
+            state = torch.as_tensor(state).unsqueeze(0) 
+            action = controller.act(state, deterministic=False).cpu().flatten().numpy()
+
+            state_next, reward, terminated, truncated, _ = env.step(action)
+            # print(t, total_reward, action) 
+            done = terminated or truncated
+            state = state_next
+            t += 1
+            total_reward += reward
+        print(total_reward)
+
 def main() -> None:
     args = parse_args()
     set_seeds(args.seed)
 
-    env = gym.make(args.env_id)
+    env = gym.make(args.env_id, render_mode="human")
     env = WorldModelEnv(
         env=env,
         in_channels=args.in_channels,
@@ -76,30 +95,9 @@ def main() -> None:
         fc_dim=args.controller_fc_dim,
     )
 
-    trainer = ControllerTrainer(
-        model=controller,
-        state_dim=args.latent_dim + args.hidden_dim,
-        action_dim=args.action_dim,
-        n_timesteps=args.n_timesteps,
-        n_gradient_steps=args.n_gradient_steps,
-        gamma=args.gamma,
-        tau=args.tau,
-        buffer_capacity=args.buffer_capacity,
-        buffer_start_size=args.buffer_start_size,
-        lr_actor=args.lr_actor,
-        lr_critic=args.lr_critic,
-        lr_alpha=args.lr_alpha,
-        batch_size=args.batch_size,
-        device=args.device,
-        n_eval_episodes=args.n_eval_episodes,
-        eval_every=args.eval_every,
-        save_every=args.save_every,
-        seed=args.seed,
-        verbose=args.verbose,
-    )
+    controller.load_state_dict(torch.load("controller-actor-critic-z32-h256-fc512.ptt1035000-seed2.pt"))
+    play(env, controller)
 
-    trainer.train(env)
-    env.close()
 
 
 if __name__ == "__main__":

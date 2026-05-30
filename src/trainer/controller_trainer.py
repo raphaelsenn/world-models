@@ -1,3 +1,5 @@
+import copy
+
 import torch
 import torch.nn.functional as F
 
@@ -8,27 +10,29 @@ import pandas as pd
 from src.trainer.base_trainer import BaseTrainer
 from src.data.controller_buffer import ControllerBuffer
 from src.world_model.controller import Controller
-from src.world_model.world_model import WorldModel
-from src.utils.eval_stats import EnvEvaluationStats
-from src.utils.wrappers import ActionWrapper
+from src.envs.world_model_env import WorldModelEnv
+from src.stats.eval_stats import EnvEvaluationStats
+from src.envs.utils import random_action
 
 
 class ControllerTrainer(BaseTrainer):
     """
-    Controller training implemented as Soft Actor-Critic (SAC).
+    Controller training implemented as Soft Actor-Critic (SAC) and using the World Model.
 
     Reference:
     ----------
     Soft Actor-Critic: Off-Policy Maximum Entropy Deep Reinforcement Learning
     with a Stochastic Actor, Haarnoja et al., 2018.
     https://arxiv.org/abs/1801.01290
+    
+    World Models, Ha and Schmidhuber, 2018
+    https://arxiv.org/abs/1803.10122
     """ 
     def __init__(
         self,
         model: Controller,
-        world_model: WorldModel,
         state_dim: int = 32 + 256,
-        action_dim: int = 2,
+        action_dim: int = 3,
         n_timesteps: int = 1_000_000,
         n_gradient_steps: int = 1,
         buffer_capacity: int = 1_000_000,
@@ -49,9 +53,6 @@ class ControllerTrainer(BaseTrainer):
     ) -> None:
         super().__init__(model, device)
 
-        self.world_model = world_model
-        self.world_model.set_device(self.device) 
-        
         self.n_timesteps = n_timesteps
         self.n_gradient_steps = n_gradient_steps
         self.buffer_start_size = buffer_start_size
@@ -92,12 +93,11 @@ class ControllerTrainer(BaseTrainer):
         )
         self.env_eval_stats = EnvEvaluationStats()
 
-    def train(self, env: gym.Env) -> None:
-        self.cache_env_settings(env)
+    def train(self, env: WorldModelEnv) -> None:
+        self.eval_env = copy.deepcopy(env)
         self.init_buffer(env)
 
-        obs, _ = env.reset()
-        state = self.world_model.reset(obs) 
+        state, _ = env.reset()
         episode = 1
 
         for step in range(self.n_timesteps):
@@ -106,8 +106,42 @@ class ControllerTrainer(BaseTrainer):
             self.handle_periodic_tasks(episode, step)
             
             if done: 
-                state = self.reset_env(env)
+                state, _ = env.reset()
                 episode += 1
+
+        env.close()
+        self.eval_env.close()
+
+    def init_buffer(self, env: gym.Env) -> None:
+        env.action_space.seed(self.seed) 
+        state, _ = env.reset(seed=self.seed)
+        done = False
+
+        for step in range(self.buffer_start_size):
+            action = random_action(step) 
+
+            state_next, reward, terminated, truncated, _ = env.step(action)
+            done = terminated or truncated
+            done_td = terminated
+
+            self.buffer.push(state, action, reward, state_next, done_td)
+            state = state_next
+
+            if done:
+                state, _ = env.reset()
+                done = False
+
+    def collect_transition(self, env: gym.Env, state: np.ndarray) -> tuple[np.ndarray, bool]:
+        self.model.eval()
+        action = self.act(state, deterministic=False)
+
+        state_next, reward, terminated, truncated, _ = env.step(action)
+        done = terminated or truncated
+        done_td = terminated
+
+        self.buffer.push(state, action, reward, state_next, done_td)
+
+        return state_next, done
 
     def train_n_steps(self) -> None:
         self.model.train()
@@ -147,9 +181,8 @@ class ControllerTrainer(BaseTrainer):
             
             # =================== Update entropy coeficient ===================
             # Read more here: https://arxiv.org/abs/1812.05905
-            alpha = self.log_alpha.exp()
             loss_alpha = torch.mean(
-                -alpha * logp_a_tilde.detach() - alpha * self.target_entropy
+                -self.log_alpha * logp_a_tilde.detach() - self.log_alpha * self.target_entropy
             )
 
             self.optimizer_alpha.zero_grad() 
@@ -162,68 +195,10 @@ class ControllerTrainer(BaseTrainer):
             # ==================== Update target networks =====================
             self.update_target_networks()
 
-    def collect_transition(self, env: gym.Env, state: np.ndarray) -> tuple[np.ndarray, bool]:
-        self.model.eval()
-        action = self.act(state, deterministic=False)
-
-        obs_next, reward, terminated, truncated, _ = env.step(action)
-        state_next = self.world_model.step(action, obs_next)
-
-        done = terminated or truncated
-        done_td = terminated
-
-        self.buffer.push(state, action, reward, state_next, done_td)
-
-        return state_next, done
-
-    def init_buffer(self, env: gym.Env) -> None:
-        env.action_space.seed(self.seed) 
-        obs, _ = env.reset(seed=self.seed)
-        state = self.world_model.reset(obs) 
-        done = False
-
-        for _ in range(self.buffer_start_size):
-            action = env.action_space.sample()
-            obs_next, reward, terminated, truncated, _ = env.step(action)
-            state_next = self.world_model.step(action, obs_next)
-            
-            done = terminated or truncated
-            done_td = terminated
-
-            self.buffer.push(state, action, reward, state_next, done_td)
-            state = state_next
-
-            if done:
-                state = self.reset_env(env)
-                done = False
-
-    @torch.no_grad()
-    def evaluate(self, step: int) -> None:
-        env = gym.make(self.env_id_, render_mode="rgb_array")        
-        env = ActionWrapper(env) 
-        returns = np.zeros(self.n_eval_episodes, dtype=np.float32)    
-        for ep in range(self.n_eval_episodes): 
-            obs, _ = env.reset(seed=self.seed + 1000 + ep)
-            state = self.world_model.reset(obs)
-            done = False
-
-            while not done: 
-                action = self.act(state, deterministic=True)
-                obs_next, reward, terminated, truncated, _ = env.step(action)
-                state_next = self.world_model.step(action, obs_next)
-                done = terminated or truncated
-                state = state_next
-
-                returns[ep] += reward
-
-        average_return = float(np.mean(returns).item())
-        self.env_eval_stats.append_step(step)
-        self.env_eval_stats.append_return(average_return)
-
     @torch.no_grad()
     def act(self, state: np.ndarray, deterministic: bool=False) -> np.ndarray:
         state_t = torch.as_tensor(state, dtype=torch.float32, device=self.device)
-        action_t = self.model.act(state_t, deterministic)
+        action_t = self.model.act(state_t.unsqueeze(0), deterministic)
         return action_t.squeeze(0).cpu().numpy()
 
     @torch.no_grad()
@@ -232,10 +207,6 @@ class ControllerTrainer(BaseTrainer):
         for theta, theta_old in params:
             theta_old.data.copy_(self.tau * theta.data + (1.0 - self.tau) * theta_old.data) 
 
-    def reset_env(self, env: gym.Env) -> np.ndarray:
-        obs, _ = env.reset()
-        return self.world_model.reset(obs)
-
     def handle_periodic_tasks(self, episode: int, step: int) -> None:
         if step % self.eval_every == 0:
             self.evaluate(step)
@@ -243,26 +214,40 @@ class ControllerTrainer(BaseTrainer):
                 print(
                     f"T: {step:9d}\t"
                     f"Episode: {episode:6d}\t"  
-                    f"Average Reward: {self.env_eval_stats.last_return:.4f}"   
-                ) 
+                    f"Average Reward: {self.env_eval_stats.last_return:.4f}\t"
+                    f"Alpha: {self.log_alpha.exp().item():.4f}"
+                )
         
         if step % self.save_every == 0:
-            self.save_stats()
+            self.save_stats(step)
 
-    def cache_env_settings(self, env: gym.Env) -> None:
-        assert isinstance(env, gym.Env), (
-            f"env needs to be a gymnasium environment, got: {type(env)}" 
-        )
-        assert env.spec is not None
-        assert env.spec.id is not None
-        self.env_id_ = env.spec.id
-    
-    def save_stats(self) -> None:
+    @torch.no_grad()
+    def evaluate(self, step: int) -> None:
+        self.eval_env.set_eval_mode()
+        returns = np.zeros(self.n_eval_episodes, dtype=np.float32)    
+        for ep in range(self.n_eval_episodes): 
+            state, _ = self.eval_env.reset(seed=self.seed + 1000 + ep)
+            done = False
+
+            while not done: 
+                action = self.act(state, deterministic=True)
+                state_next, reward, terminated, truncated, _ = self.eval_env.step(action)
+                done = terminated or truncated
+
+                state = state_next
+                returns[ep] += reward
+
+        average_return = float(np.mean(returns).item())
+        self.env_eval_stats.append_step(step)
+        self.env_eval_stats.append_return(average_return)
+
+    def save_stats(self, step: int) -> None:
         file_name = self.model.save_name()
+        file_name += f"t{step}-seed{self.seed}.pt"
         state = self.model.state_dict()
         torch.save(state, file_name)
 
-        csv_name = f"controller-train-report.csv"
+        csv_name = f"controller-train-report-seed{self.seed}.csv"
         data = {
             "Timesteps": self.env_eval_stats.step, 
             "Average Return": self.env_eval_stats.average_return

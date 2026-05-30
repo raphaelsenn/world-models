@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 import torch
 import torch.nn as nn
 
-from src.utils.eval_stats import EvaluationStats
+from src.stats.eval_stats import EvaluationStats
 
 
 class BaseTrainer(ABC):
